@@ -93,6 +93,12 @@ const App: React.FC = () => {
     // Custom AI Styles
     const [customStyles, setCustomStyles] = useState<CustomStyle[]>([]);
     
+    // Real-time color adjustments for preview
+    const [colorAdjustments, setColorAdjustments] = useState({ hue: 0, saturation: 0, brightness: 0 });
+
+    // Side-by-side comparison mode
+    const [isComparing, setIsComparing] = useState(false);
+
     // Interactive background effect
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
@@ -135,20 +141,35 @@ const App: React.FC = () => {
         if (isBatchMode || history.length === 0) {
             localStorage.removeItem(HISTORY_STORAGE_KEY);
             return;
-        };
+        }
 
-        try {
-            const sessionData = JSON.stringify({ history, historyIndex });
-            localStorage.setItem(HISTORY_STORAGE_KEY, sessionData);
-        } catch (err: any) {
-            console.error("Failed to save session to local storage:", err);
-            if (err instanceof DOMException && (err.name === 'QuotaExceededError' || err.code === 22)) {
-                try {
-                    console.warn("Quota exceeded. Saving only current image.");
-                    const minimalSession = JSON.stringify({ history: [history[historyIndex]], historyIndex: 0 });
-                    localStorage.setItem(HISTORY_STORAGE_KEY, minimalSession);
-                } catch (e) {
-                    console.error("Failed to save minimal fallback session.", e);
+        // Make a copy to mutate
+        let historyToSave = [...history];
+        let indexToSave = historyIndex;
+
+        while (historyToSave.length > 0) {
+            try {
+                const sessionData = JSON.stringify({ history: historyToSave, historyIndex: indexToSave });
+                localStorage.setItem(HISTORY_STORAGE_KEY, sessionData);
+                
+                if (historyToSave.length < history.length) {
+                    console.warn(`Session saved, but history was truncated from ${history.length} to ${historyToSave.length} items to fit storage quota.`);
+                }
+                return; // Success, exit the effect
+            } catch (err: any) {
+                if (err instanceof DOMException && (err.name === 'QuotaExceededError' || err.code === 22)) {
+                    if (historyToSave.length > 1) {
+                        console.warn(`Quota exceeded with ${historyToSave.length} items. Removing oldest and retrying.`);
+                        historyToSave.shift(); // Remove the oldest item
+                        indexToSave = Math.max(0, indexToSave - 1); // Decrement index if it was affected
+                    } else {
+                        console.error("Failed to save session: a single image history item exceeds local storage quota.");
+                        localStorage.removeItem(HISTORY_STORAGE_KEY);
+                        return;
+                    }
+                } else {
+                    console.error("Failed to save session to local storage:", err);
+                    return;
                 }
             }
         }
@@ -198,6 +219,8 @@ const App: React.FC = () => {
         setActiveTool(null);
         setEditHotspot(null);
         setMaskDataUrl(null);
+        setColorAdjustments({ hue: 0, saturation: 0, brightness: 0 });
+        setIsComparing(false);
     };
     
     const handleFileSelect = useCallback((files: FileList | null) => {
@@ -281,6 +304,10 @@ const App: React.FC = () => {
           return generateColorAdjustedImage(file, prompt, maskFile);
       }));
     }, [currentImageSrc]);
+
+    const handleColorSliderChange = (newAdjustments: { hue: number; saturation: number; brightness: number; }) => {
+        setColorAdjustments(newAdjustments);
+    };
 
     const handleApplyColorize = useCallback(async (prompt: string) => {
         await executeAIAction(withCurrentImageFile(file => generateColorizedImage(file, prompt)));
@@ -426,6 +453,7 @@ const App: React.FC = () => {
         setBatchFiles([]);
         setMaskDataUrl(null);
         setEditorMode('normal');
+        setIsComparing(false);
         localStorage.removeItem(HISTORY_STORAGE_KEY);
     };
     
@@ -514,6 +542,7 @@ const App: React.FC = () => {
         setMaskDataUrl(null);
         setActiveTool(newActiveTool);
         setEditHotspot(null);
+        setIsComparing(false);
     };
 
     const handleReset = useCallback(() => {
@@ -579,6 +608,8 @@ const App: React.FC = () => {
                                 setMaskDataUrl(null); // Reset mask when starting
                                 setEditorMode(editorMode === 'normal' ? 'masking' : 'normal');
                             }}
+                            adjustments={colorAdjustments}
+                            onAdjustmentsChange={handleColorSliderChange}
                         />;
             case 'colorize':
                 return <ColorizePanel onApplyColorize={handleApplyColorize} isLoading={isLoading} />;
@@ -605,8 +636,6 @@ const App: React.FC = () => {
             case 'removeBackground':
                 return <RemoveBackgroundPanel
                             onApplyTransparentBackground={handleApplyTransparentBackground}
-                            onApplyBackground={handleApplyBackground}
-                            onApplyBackgroundImage={handleApplyBackgroundImage}
                             isLoading={isLoading}
                         />;
             case 'background':
@@ -641,22 +670,15 @@ const App: React.FC = () => {
 
         return (
             <div className="w-full h-full flex flex-row items-start gap-4 animate-fade-in">
-                <Toolbar 
-                    activeTool={activeTool}
-                    onToolSelect={handleToolSelect}
-                    onUndo={handleUndo}
-                    canUndo={canUndo}
-                    onRedo={handleRedo}
-                    canRedo={canRedo}
-                    onDownload={handleDownload}
-                    onReset={handleReset}
-                    onNewImage={handleNewImage}
-                />
+                <aside className={`w-96 flex-shrink-0 h-full overflow-y-auto transition-all duration-500 ease-out transform ${activeTool || editorMode === 'masking' ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
+                    {renderToolPanel()}
+                </aside>
                 <div className="flex-grow h-full flex flex-col items-center justify-center">
                     <EditorCanvas
                         ref={editorCanvasRef}
                         key={currentImageSrc} 
                         imageSrc={currentImageSrc}
+                        originalImageSrc={history[0]}
                         onHotspotClick={handleHotspotClick}
                         editHotspot={editHotspot}
                         activeTool={activeTool}
@@ -669,11 +691,23 @@ const App: React.FC = () => {
                         onMaskChange={setMaskDataUrl}
                         brushSize={maskBrushSize}
                         isErasing={isErasing}
+                        colorAdjustments={colorAdjustments}
+                        isComparing={isComparing}
+                        onCompareChange={setIsComparing}
+                        canUndo={canUndo}
                     />
                 </div>
-                <aside className={`w-96 flex-shrink-0 h-full overflow-y-auto transition-all duration-500 ease-out transform ${activeTool || editorMode === 'masking' ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'}`}>
-                    {renderToolPanel()}
-                </aside>
+                <Toolbar 
+                    activeTool={activeTool}
+                    onToolSelect={handleToolSelect}
+                    onUndo={handleUndo}
+                    canUndo={canUndo}
+                    onRedo={handleRedo}
+                    canRedo={canRedo}
+                    onDownload={handleDownload}
+                    onReset={handleReset}
+                    onNewImage={handleNewImage}
+                />
             </div>
         );
     }

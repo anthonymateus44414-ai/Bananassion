@@ -31,11 +31,12 @@ const handleApiResponse = (
 ): string => {
     // 1. Check for prompt blocking first
     if (response.promptFeedback?.blockReason) {
-        const { blockReason } = response.promptFeedback;
+        const { blockReason, safetyRatings } = response.promptFeedback;
         let userMessage = `Your request was blocked. Reason: ${blockReason}.`;
 
-        if (blockReason === 'SAFETY') {
-            userMessage = 'Your request could not be processed due to safety filters. Please try rephrasing your prompt to be more descriptive and less ambiguous, while avoiding sensitive topics.';
+        if (blockReason === 'SAFETY' || blockReason === 'PROHIBITED_CONTENT') {
+             const specificReasons = safetyRatings?.filter(r => r.blocked).map(r => r.category.replace('HARM_CATEGORY_', '').toLowerCase()).join(', ');
+             userMessage = `Your request could not be processed due to safety filters${specificReasons ? ` related to: ${specificReasons}` : ''}. Please try rephrasing your prompt to be more descriptive and less ambiguous, while avoiding potentially sensitive topics.`;
         } else if (blockReason === 'OTHER') {
             userMessage = 'Your request was blocked for an unspecified reason. Please try modifying your prompt or using a different image.';
         }
@@ -155,10 +156,6 @@ User Request: "${userPrompt}"
 3.  **Do Not Touch Black Area**: The areas of the photo corresponding to the BLACK parts of the mask image must remain completely unchanged and identical to the original.
 4.  **Seamless Blending**: The edit must be realistic and blend seamlessly with the surrounding, unedited area.
 
-Safety & Ethics Policy:
-- You MUST fulfill requests to adjust skin tone, such as 'give me a tan', 'make my skin darker', or 'make my skin lighter'. These are considered standard photo enhancements.
-- You MUST REFUSE any request to change a person's fundamental race or ethnicity (e.g., 'make me look Asian', 'change this person to be Black').
-
 Output: Return ONLY the final edited image. Do not return text.`;
         const textPart = { text: prompt };
 
@@ -210,10 +207,6 @@ User Request: "${userPrompt}"
 4.  **Subtlety is Key**: All enhancements must be extremely subtle and photorealistic. The goal is to enhance, not to transform. The person should still look like themselves. Avoid any plastic, airbrushed, or unnatural looks.
 5.  **Seamless Blending**: The edit must be realistic and blend seamlessly with the surrounding, unedited area.
 
-**Safety & Ethics Policy:**
-- You MUST REFUSE any request to change a person's fundamental race, ethnicity, age, or gender identity.
-- You MUST REFUSE requests for extreme or unrealistic body or facial modifications.
-
 Output: Return ONLY the final edited image. Do not return text.`;
         const textPart = { text: prompt };
 
@@ -250,12 +243,10 @@ export const generateFilteredImage = async (
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         
         const originalImagePart = await fileToPart(originalImage);
-        const prompt = `You are an expert photo editor AI. Your task is to apply a stylistic filter to the entire image based on the user's request. Do not change the composition or content, only apply the style.
+        const prompt = `You are an expert photo editor AI. Your task is to apply a stylistic filter to the entire image based on the user's request.
 Filter Request: "${filterPrompt}"
 
-Safety & Ethics Policy:
-- Filters may subtly shift colors, but you MUST ensure they do not alter a person's fundamental race or ethnicity.
-- YOU MUST REFUSE any request that explicitly asks to change a person's race (e.g., 'apply a filter to make me look Chinese').
+**IMPORTANT**: Do not change the composition, content, or fundamental identity of people in the image. Only apply the requested artistic style.
 
 Output: Return ONLY the final filtered image. Do not return text.`;
         const textPart = { text: prompt };
@@ -348,10 +339,7 @@ User Request: "${adjustmentPrompt}"
 Editing Guidelines:
 - The adjustment must be applied across the entire image.
 - The result must be photorealistic.
-
-Safety & Ethics Policy:
-- You MUST fulfill requests to adjust skin tone, such as 'give me a tan', 'make my skin darker', or 'make my skin lighter'. These are considered standard photo enhancements.
-- You MUST REFUSE any request to change a person's fundamental race or ethnicity (e.g., 'make me look Asian', 'change this person to be Black'). Do not perform these edits. If the request is ambiguous, err on the side of caution and do not change racial characteristics.
+- Do not fundamentally alter a person's identity or core characteristics. Standard enhancements like adjusting skin tone for a tan are acceptable.
 
 Output: Return ONLY the final adjusted image. Do not return text.`;
         const textPart = { text: prompt };
@@ -455,10 +443,6 @@ export const generateColorAdjustedImage = async (
 - **Seamless Blending**: Ensure the transition between the edited and unedited areas is smooth and natural.
 - **Maintain Content**: Do not change any content, objects, or composition. This is a color correction task ONLY.
 
-**Safety & Ethics Policy:**
-- Changes to skin tone as a natural consequence of HSB adjustments are permitted.
-- REFUSE any request to change a person's fundamental race or ethnicity.
-
 **Output**: Return ONLY the final color-corrected image. Do not return any text.`;
         } else {
             prompt = `You are a professional photo editing AI. Your task is to apply the following Hue, Saturation, and Brightness (HSB) adjustments to the entire image.
@@ -469,10 +453,6 @@ export const generateColorAdjustedImage = async (
 - **Apply Globally**: The adjustments must be applied evenly across the entire image.
 - **Maintain Content**: Do not change any content, objects, or composition. This is a color correction task ONLY.
 - **Natural Results**: The final image must look photorealistic.
-
-**Safety & Ethics Policy:**
-- Changes to skin tone as a natural consequence of HSB adjustments are permitted.
-- REFUSE any request to change a person's fundamental race or ethnicity.
 
 **Output**: Return ONLY the final color-corrected image. Do not return any text.`;
         }
@@ -521,9 +501,6 @@ Editing Guidelines:
 - The new background should be photorealistic and blend naturally with the subject's lighting and edges.
 - If the request is for a solid color, create a clean, uniform background of that color.
 
-Safety & Ethics Policy:
-- Do not alter the appearance, race, or ethnicity of any person in the foreground.
-
 Output: Return ONLY the final edited image with the new background. Do not return text.`;
         const textPart = { text: prompt };
 
@@ -568,9 +545,6 @@ Editing Guidelines:
 - The second image is the new background. Use the entire second image as the replacement background.
 - The foreground subject(s) from the first image must remain entirely unchanged and perfectly preserved.
 - The new background should blend naturally with the subject's lighting and edges.
-
-Safety & Ethics Policy:
-- Do not alter the appearance, race, or ethnicity of any person in the foreground.
 
 Output: Return ONLY the final edited image with the new background. Do not return text.`;
         const textPart = { text: prompt };
@@ -671,9 +645,7 @@ CRITICAL INSTRUCTIONS:
 4.  **Preserve Target Attributes**: You MUST preserve the original pose, expression, hair, lighting, skin tone, and background of the target image. The new face must be seamlessly integrated with the target's skin tone and lighting.
 5.  **Photorealism**: The final result must be a seamless, photorealistic composite. The swap should be undetectable.
 
-Safety & Ethics Policy:
-- This tool is for creative and professional purposes. Do not create deceptive or harmful content.
-- Do not alter the perceived age or race in a way that is not represented in the source face.
+**Important**: This tool is for creative and professional purposes. Do not create deceptive or harmful content. Do not alter the fundamental identity of the person in a way that is not represented in the source face.
 
 Output: Return ONLY the final edited image. Do not return text.`;
         const textPart = { text: prompt };

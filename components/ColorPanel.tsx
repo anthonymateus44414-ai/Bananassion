@@ -13,6 +13,8 @@ interface ColorPanelProps {
   isLoading: boolean;
   maskDataUrl: string | null;
   onToggleMasking: () => void;
+  adjustments: { hue: number; saturation: number; brightness: number; };
+  onAdjustmentsChange: (adjustments: { hue: number; saturation: number; brightness: number; }) => void;
   mode?: 'interactive' | 'recipe';
   onAddToRecipe?: (step: { name: string; tool: Tool; params: { prompt: string, hue: number, saturation: number, brightness: number } }) => void;
 }
@@ -22,33 +24,31 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
   isLoading, 
   maskDataUrl,
   onToggleMasking,
+  adjustments,
+  onAdjustmentsChange,
   mode = 'interactive', 
   onAddToRecipe 
 }) => {
-  const [hue, setHue] = useState(0);
-  const [saturation, setSaturation] = useState(0);
-  const [brightness, setBrightness] = useState(0);
   const [isAreaMode, setIsAreaMode] = useState(false);
+  const { hue, saturation, brightness } = adjustments;
 
   const handleApply = () => {
-    const adjustments = [];
-    if (hue !== 0) adjustments.push(`Hue: ${hue > 0 ? '+' : ''}${hue}`);
-    if (saturation !== 0) adjustments.push(`Saturation: ${saturation > 0 ? '+' : ''}${saturation}`);
-    if (brightness !== 0) adjustments.push(`Brightness: ${brightness > 0 ? '+' : ''}${brightness}`);
+    const adjustmentsText = [];
+    if (hue !== 0) adjustmentsText.push(`Hue: ${hue > 0 ? '+' : ''}${hue}`);
+    if (saturation !== 0) adjustmentsText.push(`Saturation: ${saturation > 0 ? '+' : ''}${saturation}`);
+    if (brightness !== 0) adjustmentsText.push(`Brightness: ${brightness > 0 ? '+' : ''}${brightness}`);
     
-    if (adjustments.length > 0) {
-      const prompt = `Apply the following adjustments: ${adjustments.join(', ')}.`;
+    if (adjustmentsText.length > 0) {
+      const prompt = `Apply the following adjustments: ${adjustmentsText.join(', ')}.`;
       if (mode === 'interactive') {
         onApplyColorAdjustment(prompt, isAreaMode ? maskDataUrl : null);
       } else if (onAddToRecipe) {
         onAddToRecipe({
-          name: `Color: ${adjustments.join(', ')}`,
+          name: `Color: ${adjustmentsText.join(', ')}`,
           tool: 'color',
           params: { prompt, hue, saturation, brightness }
         });
-        setHue(0);
-        setSaturation(0);
-        setBrightness(0);
+        onAdjustmentsChange({ hue: 0, saturation: 0, brightness: 0 });
       }
     }
   };
@@ -137,7 +137,7 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
                 min="-100"
                 max="100"
                 value={hue}
-                onChange={(e) => setHue(parseInt(e.target.value, 10))}
+                onChange={(e) => onAdjustmentsChange({ ...adjustments, hue: parseInt(e.target.value, 10) })}
                 disabled={isLoading}
                 className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer range-lg"
                 style={{ background: getSliderBackground(hue) }}
@@ -160,7 +160,7 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
                 min="-100"
                 max="100"
                 value={saturation}
-                onChange={(e) => setSaturation(parseInt(e.target.value, 10))}
+                onChange={(e) => onAdjustmentsChange({ ...adjustments, saturation: parseInt(e.target.value, 10) })}
                 disabled={isLoading}
                 className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer range-lg"
                 style={{ background: getSliderBackground(saturation) }}
@@ -183,7 +183,7 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
                 min="-100"
                 max="100"
                 value={brightness}
-                onChange={(e) => setBrightness(parseInt(e.target.value, 10))}
+                onChange={(e) => onAdjustmentsChange({ ...adjustments, brightness: parseInt(e.target.value, 10) })}
                 disabled={isLoading}
                 className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer range-lg"
                 style={{ background: getSliderBackground(brightness) }}
@@ -203,7 +203,7 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
         </Tooltip>
         <Tooltip text="Reset sliders to their default values">
             <button
-                onClick={() => { setHue(0); setSaturation(0); setBrightness(0); }}
+                onClick={() => onAdjustmentsChange({ hue: 0, saturation: 0, brightness: 0 })}
                 disabled={isLoading}
                 className="text-sm text-gray-400 hover:text-white transition-colors"
             >

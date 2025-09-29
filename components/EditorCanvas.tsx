@@ -6,11 +6,12 @@
 import React, { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
 import { Hotspot, Tool, EditorMode } from '../types';
-import { MagnifyingGlassPlusIcon, MagnifyingGlassMinusIcon, ArrowsPointingOutIcon } from './icons';
+import { MagnifyingGlassPlusIcon, MagnifyingGlassMinusIcon, ArrowsPointingOutIcon, EyeIcon } from './icons';
 import Tooltip from './Tooltip';
 
 interface EditorCanvasProps {
   imageSrc: string | null;
+  originalImageSrc: string | null;
   onHotspotClick: (hotspot: Hotspot) => void;
   editHotspot: Hotspot | null;
   activeTool: Tool;
@@ -23,6 +24,10 @@ interface EditorCanvasProps {
   onMaskChange: (dataUrl: string | null) => void;
   brushSize: number;
   isErasing: boolean;
+  colorAdjustments: { hue: number; saturation: number; brightness: number; };
+  isComparing: boolean;
+  onCompareChange: (isComparing: boolean) => void;
+  canUndo: boolean;
 }
 
 export interface EditorCanvasHandles {
@@ -34,6 +39,7 @@ const MAX_SCALE = 10;
 
 const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({ 
   imageSrc, 
+  originalImageSrc,
   onHotspotClick, 
   editHotspot, 
   activeTool,
@@ -46,6 +52,10 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
   onMaskChange,
   brushSize,
   isErasing,
+  colorAdjustments,
+  isComparing,
+  onCompareChange,
+  canUndo,
 }, ref) => {
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,6 +68,10 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const panStart = useRef({ x: 0, y: 0 });
   const ignoreClick = useRef(false);
+
+  // Compare mode slider state
+  const [sliderPosition, setSliderPosition] = useState(50); // percentage
+  const [isDraggingSlider, setIsDraggingSlider] = useState(false);
 
   const [cursorPos, setCursorPos] = useState({ x: -100, y: -100 }); // Start off-screen
   const [isCursorVisible, setIsCursorVisible] = useState(false);
@@ -80,11 +94,11 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
   }, []);
 
   useEffect(() => {
-    // Reset view when entering crop mode or masking for a predictable experience
-    if (activeTool === 'crop' || editorMode === 'masking') {
+    // Reset view when entering crop mode, masking, or comparison for a predictable experience
+    if (activeTool === 'crop' || editorMode === 'masking' || isComparing) {
         fitToView();
     }
-  }, [activeTool, editorMode, fitToView]);
+  }, [activeTool, editorMode, isComparing, fitToView]);
 
   useEffect(() => {
     fitToView();
@@ -95,7 +109,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
     const handleKeyDown = (e: KeyboardEvent) => {
         const activeEl = document.activeElement;
         const isTyping = activeEl && (activeEl.tagName.toLowerCase() === 'input' || activeEl.tagName.toLowerCase() === 'textarea');
-        if (isTyping) return;
+        if (isTyping || isComparing) return;
 
         if (e.code === 'Space' && !e.repeat) {
             e.preventDefault();
@@ -128,7 +142,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
     const handleKeyUp = (e: KeyboardEvent) => {
         const activeEl = document.activeElement;
         const isTyping = activeEl && (activeEl.tagName.toLowerCase() === 'input' || activeEl.tagName.toLowerCase() === 'textarea');
-        if (isTyping) return;
+        if (isTyping || isComparing) return;
 
         if (e.code === 'Space') {
             e.preventDefault();
@@ -141,7 +155,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
         window.removeEventListener('keydown', handleKeyDown);
         window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [fitToView]);
+  }, [fitToView, isComparing]);
 
   const calculateImageGeometry = useCallback(() => {
       const img = imgRef.current;
@@ -240,7 +254,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    if (!containerRef.current || activeTool === 'crop' || editorMode === 'masking') return;
+    if (!containerRef.current || activeTool === 'crop' || editorMode === 'masking' || isComparing) return;
 
     const { deltaY } = e;
     const scaleAmount = -deltaY / 500;
@@ -271,7 +285,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
         return;
     }
 
-    if ((isSpacePressed || e.button === 1) && activeTool !== 'crop') { // Spacebar or Middle mouse button
+    if ((isSpacePressed || e.button === 1) && activeTool !== 'crop' && !isComparing) { // Spacebar or Middle mouse button
         e.preventDefault();
         panStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
         setIsPanning(true);
@@ -327,7 +341,12 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
   };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (ignoreClick.current || isSpacePressed || isPanning || !imgRef.current || activeTool === 'crop' || editorMode === 'masking') {
+    if (ignoreClick.current || isSpacePressed || isPanning || !imgRef.current || activeTool === 'crop' || editorMode === 'masking' || isComparing) {
+        return;
+    }
+
+    // Only allow hotspot clicks for tools that use them.
+    if (activeTool !== 'enhance' && activeTool !== 'addObject') {
         return;
     }
     
@@ -342,7 +361,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
   };
 
   const adjustZoom = (amount: number) => {
-    if (activeTool === 'crop' || editorMode === 'masking') return;
+    if (activeTool === 'crop' || editorMode === 'masking' || isComparing) return;
     const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, transform.scale + amount));
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) {
@@ -368,12 +387,47 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
       if (isDrawing) {
           handleMouseUp();
       }
+      if (isDraggingSlider) {
+          setIsDraggingSlider(false);
+      }
   };
+
+  // --- Compare Slider Logic ---
+  const handleSliderMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingSlider(true);
+  };
+  
+  const handleSliderMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDraggingSlider || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    let newPosition = (x / rect.width) * 100;
+    newPosition = Math.max(0, Math.min(100, newPosition)); // Clamp between 0 and 100
+    setSliderPosition(newPosition);
+  }, [isDraggingSlider]);
+
+  const handleSliderMouseUp = useCallback(() => {
+    setIsDraggingSlider(false);
+  }, []);
+
+  useEffect(() => {
+    if (isDraggingSlider) {
+      window.addEventListener('mousemove', handleSliderMouseMove);
+      window.addEventListener('mouseup', handleSliderMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleSliderMouseMove);
+      window.removeEventListener('mouseup', handleSliderMouseUp);
+    };
+  }, [isDraggingSlider, handleSliderMouseMove, handleSliderMouseUp]);
 
   if (!imageSrc) return null;
   
   let cursorClass = 'cursor-default';
-  if (editorMode === 'masking') {
+  if (isComparing) {
+      cursorClass = 'cursor-default';
+  } else if (editorMode === 'masking') {
       cursorClass = 'cursor-none'; // Custom cursor will be shown
   } else if (isSpacePressed || isPanning) {
       cursorClass = isPanning ? 'cursor-grabbing' : 'cursor-grab';
@@ -385,6 +439,11 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
       cursorClass = 'cursor-grab';
   }
 
+  const imageStyle: React.CSSProperties = {
+      filter: `hue-rotate(${colorAdjustments.hue * 1.8}deg) saturate(${100 + colorAdjustments.saturation}%) brightness(${100 + colorAdjustments.brightness}%)`,
+      imageRendering: 'pixelated'
+  };
+
   const imageContent = (
     <img
         ref={imgRef}
@@ -393,15 +452,23 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
         className="h-full w-full object-contain pointer-events-none"
         onLoad={calculateImageGeometry}
         draggable="false"
-        style={{ imageRendering: 'pixelated' }}
+        style={imageStyle}
     />
   );
+  
+  const imageContainerStyle: React.CSSProperties = {
+      position: 'absolute',
+      width: `${imageGeom.renderedWidth}px`,
+      height: `${imageGeom.renderedHeight}px`,
+      top: `${imageGeom.offsetY}px`,
+      left: `${imageGeom.offsetX}px`,
+  };
 
   return (
     <div className="w-full h-full flex justify-center items-center p-4 relative bg-black/20 rounded-lg shadow-inner">
         <div 
           ref={containerRef}
-          className="relative w-full h-full overflow-hidden select-none"
+          className={`relative w-full h-full overflow-hidden select-none ${cursorClass}`}
           onWheel={handleWheel}
           onClick={handleContainerClick}
           onMouseDown={handleMouseDown}
@@ -411,65 +478,91 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
           onMouseEnter={handleMouseEnter}
         >
             <div
-                className={`relative w-full h-full ${cursorClass}`}
+                className="relative w-full h-full"
                 style={{
                     transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
                     transformOrigin: 'top left',
                 }}
             >
-                {activeTool === 'crop' ? (
-                    <ReactCrop
-                        crop={crop}
-                        onChange={(_, percentCrop) => onCropChange(percentCrop)}
-                        onComplete={(c) => onCropComplete(c)}
-                        aspect={aspect}
-                        className="flex justify-center items-center"
-                    >
-                        {imageContent}
-                    </ReactCrop>
-                ) : imageContent}
-
-                {/* Mask Overlay */}
-                {maskDataUrl && editorMode === 'normal' && (
-                    <div 
-                      className="absolute top-0 left-0 w-full h-full pointer-events-none"
-                      style={{
-                        maskImage: `url(${maskDataUrl})`,
-                        WebkitMaskImage: `url(${maskDataUrl})`,
-                        maskSize: '100% 100%',
-                        WebkitMaskSize: '100% 100%',
-                        backgroundColor: 'rgba(239, 68, 68, 0.5)', // red-500 with 50% opacity
-                      }}
+              {isComparing ? (
+                <div style={imageContainerStyle}>
+                    <img
+                        src={originalImageSrc}
+                        alt="Original content"
+                        className="absolute top-0 left-0 h-full w-full object-contain pointer-events-none"
+                        style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
+                        draggable="false"
                     />
-                )}
+                    <img
+                        src={imageSrc}
+                        alt="Edited content"
+                        className="absolute top-0 left-0 h-full w-full object-contain pointer-events-none"
+                        style={{ clipPath: `inset(0 0 0 ${sliderPosition}%)` }}
+                        draggable="false"
+                    />
+                </div>
+              ) : (
+                <div style={imageContainerStyle}>
+                    {activeTool === 'crop' ? (
+                        <ReactCrop
+                            crop={crop}
+                            onChange={(_, percentCrop) => onCropChange(percentCrop)}
+                            onComplete={(c) => onCropComplete(c)}
+                            aspect={aspect}
+                            className="flex justify-center items-center h-full w-full"
+                        >
+                            {imageContent}
+                        </ReactCrop>
+                    ) : imageContent}
 
-                {/* Mask Drawing Canvas */}
-                <canvas 
-                    ref={maskCanvasRef}
-                    className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-50"
-                    style={{ 
-                        imageRendering: 'pixelated',
-                        display: editorMode === 'masking' ? 'block' : 'none',
-                        mixBlendMode: 'screen'
-                    }} 
-                />
-                
-                {editHotspot && (activeTool === 'enhance' || activeTool === 'addObject') && imageGeom.renderedWidth > 0 && (() => {
-                    const { renderedWidth, offsetX, offsetY } = imageGeom;
-                    if (imageGeom.naturalWidth === 0) return null;
+                    {maskDataUrl && editorMode === 'normal' && (
+                        <div 
+                        className="absolute top-0 left-0 w-full h-full pointer-events-none"
+                        style={{
+                            maskImage: `url(${maskDataUrl})`,
+                            WebkitMaskImage: `url(${maskDataUrl})`,
+                            maskSize: '100% 100%',
+                            WebkitMaskSize: '100% 100%',
+                            backgroundColor: 'rgba(239, 68, 68, 0.5)',
+                        }}
+                        />
+                    )}
 
-                    const scale = renderedWidth / imageGeom.naturalWidth;
-                    const left = offsetX + editHotspot.x * scale;
-                    const top = offsetY + editHotspot.y * scale;
+                    <canvas 
+                        ref={maskCanvasRef}
+                        className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-50"
+                        style={{ 
+                            imageRendering: 'pixelated',
+                            display: editorMode === 'masking' ? 'block' : 'none',
+                            mixBlendMode: 'screen'
+                        }} 
+                    />
                     
-                    return (
-                      <div
-                        className="absolute w-6 h-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500/50 pointer-events-none ring-2 ring-blue-500 animate-ping-once"
-                        style={{ left: `${left}px`, top: `${top}px` }}
-                      />
-                    );
-                })()}
+                    {editHotspot && (activeTool === 'enhance' || activeTool === 'addObject') && imageGeom.renderedWidth > 0 && (() => {
+                        const scale = imageGeom.renderedWidth / imageGeom.naturalWidth;
+                        const left = editHotspot.x * scale;
+                        const top = editHotspot.y * scale;
+                        return (
+                          <div
+                            className="absolute w-6 h-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500/50 pointer-events-none ring-2 ring-blue-500 animate-ping-once"
+                            style={{ left: `${left}px`, top: `${top}px` }}
+                          />
+                        );
+                    })()}
+                </div>
+              )}
             </div>
+            {isComparing && (
+                <div
+                    className="absolute top-0 h-full w-1 bg-white/80 cursor-ew-resize z-10 flex items-center justify-center"
+                    style={{ left: `${sliderPosition}%`, transform: 'translateX(-50%)' }}
+                    onMouseDown={handleSliderMouseDown}
+                >
+                    <div className="w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-800 font-black text-lg select-none">
+                        &lt;&nbsp;&gt;
+                    </div>
+                </div>
+            )}
         </div>
 
         {/* Brush Cursor */}
@@ -481,7 +574,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
                     top: `${cursorPos.y}px`,
                     width: `${brushSize}px`,
                     height: `${brushSize}px`,
-                    border: '2px solid white',
+                    border: `2px solid ${isErasing ? '#ef4444' : 'white'}`,
                     transform: 'translate(-50%, -50%)',
                     boxShadow: '0 0 10px rgba(0, 0, 0, 0.5)',
                     mixBlendMode: 'difference',
@@ -489,19 +582,28 @@ const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({
             />
         )}
         
-        <div className="absolute bottom-4 left-4 flex items-center gap-2 bg-gray-800/70 p-1.5 rounded-lg backdrop-blur-sm text-sm">
+        <div className="absolute bottom-4 left-4 flex items-center gap-1 bg-gray-800/70 p-1.5 rounded-lg backdrop-blur-sm text-sm">
             <Tooltip text="Zoom Out (Ctrl/Cmd + -)">
-              <button onClick={() => adjustZoom(-0.2)} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors" disabled={activeTool === 'crop' || editorMode === 'masking'}><MagnifyingGlassMinusIcon className="w-5 h-5" /></button>
+              <button onClick={() => adjustZoom(-0.2)} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={activeTool === 'crop' || editorMode === 'masking' || isComparing}><MagnifyingGlassMinusIcon className="w-5 h-5" /></button>
             </Tooltip>
             <span className="text-gray-200 font-mono w-16 text-center tabular-nums">
                 {(transform.scale * 100).toFixed(0)}%
             </span>
             <Tooltip text="Zoom In (Ctrl/Cmd + +)">
-              <button onClick={() => adjustZoom(0.2)} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors" disabled={activeTool === 'crop' || editorMode === 'masking'}><MagnifyingGlassPlusIcon className="w-5 h-5" /></button>
+              <button onClick={() => adjustZoom(0.2)} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={activeTool === 'crop' || editorMode === 'masking' || isComparing}><MagnifyingGlassPlusIcon className="w-5 h-5" /></button>
             </Tooltip>
             <Tooltip text="Fit to View (Ctrl/Cmd + 0)">
-              <button onClick={fitToView} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors" disabled={activeTool === 'crop' || editorMode === 'masking'}><ArrowsPointingOutIcon className="w-5 h-5" /></button>
+              <button onClick={fitToView} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={activeTool === 'crop' || editorMode === 'masking' || isComparing}><ArrowsPointingOutIcon className="w-5 h-5" /></button>
             </Tooltip>
+            {canUndo && (
+                <div className="border-l border-gray-600 ml-1 pl-1">
+                    <Tooltip text="Compare Before/After">
+                      <button onClick={() => onCompareChange(!isComparing)} className={`p-1.5 rounded-md transition-colors ${isComparing ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
+                        <EyeIcon className="w-5 h-5" />
+                      </button>
+                    </Tooltip>
+                </div>
+            )}
         </div>
     </div>
   );

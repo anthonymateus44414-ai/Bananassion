@@ -20,30 +20,55 @@ interface ToolbarProps {
   onNewImage: () => void;
 }
 
-const ToolButton: React.FC<{
+// Small, icon-only button for top-level actions
+const ActionButton: React.FC<{
   label: string;
   icon: React.ReactNode;
-  isActive: boolean;
   onClick: () => void;
   disabled?: boolean;
-}> = ({ label, icon, isActive, onClick, disabled }) => (
+}> = ({ label, icon, onClick, disabled }) => (
     <Tooltip text={label}>
         <button
             onClick={onClick}
             disabled={disabled}
             aria-label={label}
-            className={`flex items-center justify-center p-3 rounded-lg w-12 h-12 transition-colors duration-200 ${
-                isActive 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-700/50 text-gray-300 hover:bg-gray-700'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`flex items-center justify-center p-3 rounded-lg w-12 h-12 transition-colors duration-200 bg-gray-700/50 text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed`}
         >
             {icon}
         </button>
     </Tooltip>
 );
 
-const Divider: React.FC = () => <div className="h-px w-8 bg-gray-600 my-2 mx-auto" />;
+// Larger button with icon and text for the main tool grid
+const ToolButton: React.FC<{
+  label: string;
+  tooltipText: string;
+  // Fix: Use React.ReactElement for icon prop to allow cloning with props.
+  icon: React.ReactElement;
+  isActive: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}> = ({ label, tooltipText, icon, isActive, onClick, disabled }) => (
+    <Tooltip text={tooltipText}>
+        <button
+            onClick={onClick}
+            disabled={disabled}
+            aria-label={tooltipText}
+            className={`flex flex-col items-center justify-center gap-1 p-2 rounded-lg w-24 h-24 text-center transition-colors duration-200 ${
+                isActive 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-700/50 text-gray-300 hover:bg-gray-700'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+            {/* Fix: removed type assertion as icon is now correctly typed as React.ReactElement */}
+            {React.cloneElement(icon, { className: "w-8 h-8 mb-1" })}
+            <span className="text-xs font-medium leading-tight">{label}</span>
+        </button>
+    </Tooltip>
+);
+
+
+const Divider: React.FC = () => <div className="h-px w-full bg-gray-600 my-1" />;
 
 const Toolbar: React.FC<ToolbarProps> = ({
   activeTool,
@@ -56,7 +81,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onReset,
   onNewImage,
 }) => {
-  const tools: { id: Tool; label: string; icon: React.ReactNode; title: string }[] = [
+  // Fix: Use React.ReactElement for icon type as all icons are elements.
+  const tools: { id: Tool; label: string; icon: React.ReactElement; title: string }[] = [
     // Composition Tools
     { id: 'crop', label: 'Crop', icon: <ScissorsIcon className="w-6 h-6" />, title: "Crop & Resize: Freely crop, or select a specific aspect ratio (e.g., 1:1, 16:9). Great for reframing your subject." },
     { id: 'expand', label: 'Expand', icon: <ArrowsPointingOutIcon className="w-6 h-6" />, title: "Expand Canvas: Use AI to extend the image beyond its borders in any direction. Perfect for 'uncropping' or changing aspect ratios without losing content." },
@@ -81,39 +107,21 @@ const Toolbar: React.FC<ToolbarProps> = ({
   ];
   
   return (
-    <div className="h-full bg-gray-800/50 border-r border-gray-700 p-2 flex flex-col items-center gap-2 backdrop-blur-sm">
-        <Tooltip text="New Image">
-            <button onClick={onNewImage} className="p-3 rounded-lg bg-gray-700/50 text-gray-300 hover:bg-gray-700 transition-colors w-12 h-12 flex items-center justify-center">
-                <ArrowPathIcon className="w-6 h-6" />
-            </button>
-        </Tooltip>
+    <div className="h-full bg-gray-800/50 border-l border-gray-700 p-2 flex flex-col items-center gap-2 backdrop-blur-sm w-56">
+        <div className="flex items-center justify-around w-full">
+            <ActionButton label="New Image" icon={<ArrowPathIcon className="w-6 h-6" />} onClick={onNewImage} />
+            <ActionButton label="Undo (Ctrl+Z)" icon={<UndoIcon className="w-6 h-6" />} onClick={onUndo} disabled={!canUndo} />
+            <ActionButton label="Redo (Ctrl+Y)" icon={<RedoIcon className="w-6 h-6" />} onClick={onRedo} disabled={!canRedo} />
+        </div>
         
         <Divider />
 
-        <div className="flex flex-col items-center gap-2">
-            <ToolButton
-                label="Undo (Ctrl+Z)"
-                icon={<UndoIcon className="w-6 h-6" />}
-                isActive={false}
-                onClick={onUndo}
-                disabled={!canUndo}
-            />
-            <ToolButton
-                label="Redo (Ctrl+Y)"
-                icon={<RedoIcon className="w-6 h-6" />}
-                isActive={false}
-                onClick={onRedo}
-                disabled={!canRedo}
-            />
-        </div>
-
-        <Divider />
-
-        <div className="flex-grow flex flex-col items-center gap-2 overflow-y-auto pr-1">
+        <div className="grid grid-cols-2 gap-2">
             {tools.map(tool => (
                 <ToolButton
                     key={tool.id}
-                    label={tool.title}
+                    label={tool.label}
+                    tooltipText={tool.title}
                     icon={tool.icon}
                     isActive={activeTool === tool.id}
                     onClick={() => onToolSelect(tool.id)}
@@ -121,11 +129,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
             ))}
         </div>
         
+        <div className="flex-grow" />
+
         <Divider />
 
         <Tooltip text="Save the current image to your device">
-            <button onClick={onDownload} className="p-3 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors w-12 h-12 flex items-center justify-center">
+            <button onClick={onDownload} className="w-full p-3 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors flex items-center justify-center gap-2 font-semibold text-base">
                 <ArrowDownTrayIcon className="w-6 h-6" />
+                Download
             </button>
         </Tooltip>
     </div>
