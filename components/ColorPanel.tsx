@@ -5,211 +5,173 @@
 
 import React, { useState } from 'react';
 import Tooltip from './Tooltip';
-import { Tool } from '../types';
+import { Layer, Tool } from '../types';
 import { PaintBrushIcon } from './icons';
+import Spinner from './Spinner';
+
+interface RecipeStep {
+  id: string;
+  name: string;
+  tool: Tool;
+  params: any;
+}
 
 interface ColorPanelProps {
-  onApplyColorAdjustment: (prompt: string, mask: string | null) => void;
+  onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
   isLoading: boolean;
   maskDataUrl: string | null;
   onToggleMasking: () => void;
   adjustments: { hue: number; saturation: number; brightness: number; };
   onAdjustmentsChange: (adjustments: { hue: number; saturation: number; brightness: number; }) => void;
-  mode?: 'interactive' | 'recipe';
-  onAddToRecipe?: (step: { name: string; tool: Tool; params: { prompt: string, hue: number, saturation: number, brightness: number } }) => void;
+  onAddToRecipe?: (step: Omit<RecipeStep, 'id'>) => void;
+  mode?: 'layer' | 'recipe';
 }
 
 const ColorPanel: React.FC<ColorPanelProps> = ({ 
-  onApplyColorAdjustment, 
+  onAddLayer,
   isLoading, 
   maskDataUrl,
   onToggleMasking,
   adjustments,
   onAdjustmentsChange,
-  mode = 'interactive', 
-  onAddToRecipe 
+  onAddToRecipe,
+  mode = 'layer',
 }) => {
   const [isAreaMode, setIsAreaMode] = useState(false);
   const { hue, saturation, brightness } = adjustments;
 
   const handleApply = () => {
     const adjustmentsText = [];
-    if (hue !== 0) adjustmentsText.push(`Hue: ${hue > 0 ? '+' : ''}${hue}`);
-    if (saturation !== 0) adjustmentsText.push(`Saturation: ${saturation > 0 ? '+' : ''}${saturation}`);
-    if (brightness !== 0) adjustmentsText.push(`Brightness: ${brightness > 0 ? '+' : ''}${brightness}`);
+    if (hue !== 0) adjustmentsText.push(`Оттенок: ${hue > 0 ? '+' : ''}${hue}`);
+    if (saturation !== 0) adjustmentsText.push(`Насыщенность: ${saturation > 0 ? '+' : ''}${saturation}`);
+    if (brightness !== 0) adjustmentsText.push(`Яркость: ${brightness > 0 ? '+' : ''}${brightness}`);
     
     if (adjustmentsText.length > 0) {
-      const prompt = `Apply the following adjustments: ${adjustmentsText.join(', ')}.`;
-      if (mode === 'interactive') {
-        onApplyColorAdjustment(prompt, isAreaMode ? maskDataUrl : null);
-      } else if (onAddToRecipe) {
-        onAddToRecipe({
-          name: `Color: ${adjustmentsText.join(', ')}`,
-          tool: 'color',
-          params: { prompt, hue, saturation, brightness }
-        });
-        onAdjustmentsChange({ hue: 0, saturation: 0, brightness: 0 });
+      const prompt = `Примените следующие коррекции: ${adjustmentsText.join(', ')}.`;
+      const stepName = `Цвет: ${adjustmentsText.join(', ')}`;
+      const params = { prompt, mask: isAreaMode ? maskDataUrl : null };
+
+      if (mode === 'recipe' && onAddToRecipe) {
+        onAddToRecipe({ name: stepName, tool: 'color', params });
+      } else {
+        onAddLayer({ name: stepName, tool: 'color', params });
       }
     }
   };
 
   const isChanged = hue !== 0 || saturation !== 0 || brightness !== 0;
-  const canApply = isLoading || !isChanged || (isAreaMode && !maskDataUrl);
-
-  const getSliderBackground = (value: number) => {
-    const percentage = ((value + 100) / 200) * 100;
-    return `linear-gradient(to right, #4f46e5 0%, #4f46e5 ${percentage}%, #4b5563 ${percentage}%, #4b5563 100%)`;
-  };
-
-  const handleToggleAreaMode = () => {
-    const newIsAreaMode = !isAreaMode;
-    setIsAreaMode(newIsAreaMode);
-    if (newIsAreaMode) {
-      onToggleMasking(); // Enter masking mode
-    }
-  }
+  const canApply = !isChanged || (isAreaMode && !maskDataUrl);
+  const buttonText = mode === 'recipe' ? 'Добавить в рецепт' : 'Добавить слой';
 
   return (
-    <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-6 flex flex-col gap-6 animate-fade-in backdrop-blur-sm">
+    <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-6 flex flex-col gap-6 animate-fade-in">
       <div className="flex flex-col items-center">
-        <h3 className="text-lg font-semibold text-gray-300">Color Adjustments</h3>
-        {mode === 'interactive' && (
-          <div className="mt-2 w-full max-w-sm bg-gray-900/40 rounded-lg p-1 flex items-center justify-center gap-1">
-              <Tooltip text="Apply adjustments to the entire image">
+        <h3 className="text-xl font-bold text-text-primary">Настройки цвета</h3>
+        <div className="mt-2 w-full max-w-sm bg-stone-100 border border-border-color rounded-lg p-1 flex items-center justify-center gap-1">
+            <Tooltip side="left" text="Применить коррекцию ко всему изображению">
+              <button
+                  onClick={() => setIsAreaMode(false)}
+                  className={`w-full font-semibold py-2 px-4 rounded-md transition-all duration-200 text-sm ${
+                      !isAreaMode
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+              >
+                  Глобально
+              </button>
+            </Tooltip>
+            <Tooltip side="left" text="Применить коррекцию только к выбранной области">
                 <button
-                    onClick={() => setIsAreaMode(false)}
+                    onClick={() => setIsAreaMode(true)}
                     className={`w-full font-semibold py-2 px-4 rounded-md transition-all duration-200 text-sm ${
-                        !isAreaMode
-                        ? 'bg-white/10 text-white'
-                        : 'text-gray-400 hover:text-white hover:bg-white/5'
+                        isAreaMode
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary'
                     }`}
                 >
-                    Global
+                    Выбранная область
                 </button>
-              </Tooltip>
-              <Tooltip text="Apply adjustments only to a selected area">
-                  <button
-                      onClick={() => setIsAreaMode(true)}
-                      className={`w-full font-semibold py-2 px-4 rounded-md transition-all duration-200 text-sm ${
-                          isAreaMode
-                          ? 'bg-white/10 text-white'
-                          : 'text-gray-400 hover:text-white hover:bg-white/5'
-                      }`}
-                  >
-                      Specific Area
-                  </button>
-              </Tooltip>
-          </div>
-        )}
+            </Tooltip>
+        </div>
       </div>
       
-      {isAreaMode && mode === 'interactive' && (
-          <div className="flex flex-col items-center gap-2 p-3 bg-gray-900/50 rounded-lg -my-2">
-              <p className="text-sm text-gray-400 text-center">
-                  {maskDataUrl ? 'An area is selected. Click Apply to continue.' : 'No area selected.'}
+      {isAreaMode && (
+          <div className="flex flex-col items-center gap-2 p-3 bg-stone-50 border border-border-color rounded-lg -my-2">
+              <p className="text-sm text-text-secondary text-center">
+                  {maskDataUrl ? 'Область выбрана. Нажмите "Применить", чтобы продолжить.' : 'Область не выбрана.'}
               </p>
-              <Tooltip text={maskDataUrl ? "Redraw the selected area" : "Select an area to edit"}>
+              <Tooltip side="left" text={maskDataUrl ? "Перерисовать выделенную область" : "Выбрать область для редактирования"}>
                   <button
                       onClick={onToggleMasking}
-                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                      className="flex items-center gap-2 bg-secondary hover:bg-[#4B5563] text-white font-semibold py-2 px-4 rounded-lg transition-colors"
                   >
                       <PaintBrushIcon className="w-5 h-5"/>
-                      {maskDataUrl ? 'Reselect Area' : 'Select Area'}
+                      {maskDataUrl ? 'Выбрать заново' : 'Выбрать область'}
                   </button>
               </Tooltip>
           </div>
       )}
+      
+      <div className="w-full flex flex-col gap-4">
+          {/* Hue Slider */}
+          <div className="flex items-center gap-3">
+              <label htmlFor="hue" className="text-sm font-medium text-text-primary w-20">Оттенок</label>
+              <input
+                  id="hue"
+                  type="range"
+                  min="-100"
+                  max="100"
+                  value={hue}
+                  onChange={(e) => onAdjustmentsChange({ ...adjustments, hue: parseInt(e.target.value, 10) })}
+                  className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                  style={{ background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }}
+              />
+              <span className="text-sm font-mono text-text-primary w-10 text-center">{hue}</span>
+          </div>
 
-      <div className="space-y-6">
-        {/* Hue Slider */}
-        <div className="flex flex-col gap-2">
-            <div className="flex justify-between items-center">
-                <Tooltip text="Adjust the overall color tint. Shifts all colors around the color wheel.">
-                    <label htmlFor="hue" className="font-semibold text-gray-300">Hue</label>
-                </Tooltip>
-                <span className="text-lg font-mono bg-gray-900/50 px-3 py-1 rounded-md text-gray-200 w-20 text-center">
-                    {hue > 0 ? '+' : ''}{hue}
-                </span>
-            </div>
-            <input
-                id="hue"
-                type="range"
-                min="-100"
-                max="100"
-                value={hue}
-                onChange={(e) => onAdjustmentsChange({ ...adjustments, hue: parseInt(e.target.value, 10) })}
-                disabled={isLoading}
-                className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer range-lg"
-                style={{ background: getSliderBackground(hue) }}
-            />
-        </div>
+          {/* Saturation Slider */}
+          <div className="flex items-center gap-3">
+              <label htmlFor="saturation" className="text-sm font-medium text-text-primary w-20">Насыщенность</label>
+              <input
+                  id="saturation"
+                  type="range"
+                  min="-100"
+                  max="100"
+                  value={saturation}
+                  onChange={(e) => onAdjustmentsChange({ ...adjustments, saturation: parseInt(e.target.value, 10) })}
+                  className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                  style={{ background: `linear-gradient(to right, #808080, hsl(${hue * 1.8}, 100%, 50%))` }}
+              />
+              <span className="text-sm font-mono text-text-primary w-10 text-center">{saturation}</span>
+          </div>
 
-        {/* Saturation Slider */}
-        <div className="flex flex-col gap-2">
-            <div className="flex justify-between items-center">
-                <Tooltip text="Adjust the intensity of the colors. Higher values make colors more vibrant.">
-                    <label htmlFor="saturation" className="font-semibold text-gray-300">Saturation</label>
-                </Tooltip>
-                <span className="text-lg font-mono bg-gray-900/50 px-3 py-1 rounded-md text-gray-200 w-20 text-center">
-                    {saturation > 0 ? '+' : ''}{saturation}
-                </span>
-            </div>
-            <input
-                id="saturation"
-                type="range"
-                min="-100"
-                max="100"
-                value={saturation}
-                onChange={(e) => onAdjustmentsChange({ ...adjustments, saturation: parseInt(e.target.value, 10) })}
-                disabled={isLoading}
-                className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer range-lg"
-                style={{ background: getSliderBackground(saturation) }}
-            />
-        </div>
-
-        {/* Brightness Slider */}
-        <div className="flex flex-col gap-2">
-            <div className="flex justify-between items-center">
-                <Tooltip text="Adjust the overall lightness or darkness of the image.">
-                    <label htmlFor="brightness" className="font-semibold text-gray-300">Brightness</label>
-                </Tooltip>
-                <span className="text-lg font-mono bg-gray-900/50 px-3 py-1 rounded-md text-gray-200 w-20 text-center">
-                    {brightness > 0 ? '+' : ''}{brightness}
-                </span>
-            </div>
-            <input
-                id="brightness"
-                type="range"
-                min="-100"
-                max="100"
-                value={brightness}
-                onChange={(e) => onAdjustmentsChange({ ...adjustments, brightness: parseInt(e.target.value, 10) })}
-                disabled={isLoading}
-                className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer range-lg"
-                style={{ background: getSliderBackground(brightness) }}
-            />
-        </div>
+          {/* Brightness Slider */}
+          <div className="flex items-center gap-3">
+              <label htmlFor="brightness" className="text-sm font-medium text-text-primary w-20">Яркость</label>
+              <input
+                  id="brightness"
+                  type="range"
+                  min="-100"
+                  max="100"
+                  value={brightness}
+                  onChange={(e) => onAdjustmentsChange({ ...adjustments, brightness: parseInt(e.target.value, 10) })}
+                  className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                  style={{ background: 'linear-gradient(to right, black, white)' }}
+              />
+              <span className="text-sm font-mono text-text-primary w-10 text-center">{brightness}</span>
+          </div>
       </div>
 
-      <div className="pt-2 flex flex-col items-center gap-4">
-        <Tooltip text={mode === 'interactive' ? "Apply the selected color adjustments" : "Add these adjustments to the recipe"}>
-            <button
-                onClick={handleApply}
-                className="w-full max-w-sm bg-gradient-to-br from-blue-600 to-blue-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-blue-800 disabled:to-blue-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
-                disabled={canApply}
-            >
-                {mode === 'interactive' ? 'Apply Adjustments' : 'Add to Recipe'}
-            </button>
-        </Tooltip>
-        <Tooltip text="Reset sliders to their default values">
-            <button
-                onClick={() => onAdjustmentsChange({ hue: 0, saturation: 0, brightness: 0 })}
-                disabled={isLoading}
-                className="text-sm text-gray-400 hover:text-white transition-colors"
-            >
-                Reset Sliders
-            </button>
-        </Tooltip>
+      <div className="w-full flex items-center justify-center gap-3 mt-2">
+          <Tooltip side="left" text={`Применить коррекцию цвета как новый ${mode === 'recipe' ? 'шаг рецепта' : 'слой'}`}>
+              <button
+                  onClick={handleApply}
+                  disabled={isLoading || canApply}
+                  className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center h-12"
+              >
+                  {isLoading ? <Spinner size="sm" /> : buttonText}
+              </button>
+          </Tooltip>
       </div>
     </div>
   );

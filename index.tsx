@@ -5,7 +5,8 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+// FIX: Explicitly reference the .tsx file to resolve any module resolution ambiguity.
+import App from './App.tsx';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

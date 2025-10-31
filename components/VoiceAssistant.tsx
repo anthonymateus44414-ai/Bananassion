@@ -4,8 +4,8 @@
 */
 import React from 'react';
 
-const ImageUploader: React.FC = () => {
+const VoiceAssistant: React.FC = () => {
   return null;
 };
 
-export default ImageUploader;
+export default VoiceAssistant;

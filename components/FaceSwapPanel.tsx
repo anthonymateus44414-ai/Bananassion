@@ -4,102 +4,276 @@
 */
 
 import React, { useState } from 'react';
-import { UploadIcon, UserCircleIcon, InformationCircleIcon } from './icons';
+import { UploadIcon, TrashIcon, UserCircleIcon, SparklesIcon, XCircleIcon } from './icons';
 import Tooltip from './Tooltip';
+import { Layer, DetectedObject } from '../types';
+import Spinner from './Spinner';
+import { fileToDataURL } from '../utils';
+import { detectFaces } from '../services/geminiService';
 
 interface FaceSwapPanelProps {
-  onApplyFaceSwap: (faceFiles: File[]) => void;
+  onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
   isLoading: boolean;
 }
 
-const FaceSwapPanel: React.FC<FaceSwapPanelProps> = ({ onApplyFaceSwap, isLoading }) => {
-  const [faceFiles, setFaceFiles] = useState<(File | null)[]>([null, null, null]);
-  const [facePreviews, setFacePreviews] = useState<(string | null)[]>([null, null, null]);
-  const [isDraggingOver, setIsDraggingOver] = useState<number | null>(null);
+interface ReferenceFile {
+    id: string;
+    file: File;
+    preview: string;
+}
 
-  const handleFileChange = (file: File | null, index: number) => {
-    if (file) {
-      const newFiles = [...faceFiles];
-      newFiles[index] = file;
-      setFaceFiles(newFiles);
+const FaceSwapPanel: React.FC<FaceSwapPanelProps> = ({ onAddLayer, isLoading }) => {
+    const [targetFile, setTargetFile] = useState<File | null>(null);
+    const [targetPreview, setTargetPreview] = useState<string | null>(null);
+    const [referenceFiles, setReferenceFiles] = useState<ReferenceFile[]>([]);
+    
+    // State for the new intelligent workflow
+    const [analysisState, setAnalysisState] = useState<'idle' | 'analyzing' | 'analyzed' | 'error'>('idle');
+    const [detectedFaces, setDetectedFaces] = useState<DetectedObject[]>([]);
+    const [selectedFaceMask, setSelectedFaceMask] = useState<string | null>(null);
+    const [analysisError, setAnalysisError] = useState<string | null>(null);
+    
+    // State for advanced options
+    const [expressionOption, setExpressionOption] = useState<'original' | 'reference'>('original');
+    const [blendingStrength, setBlendingStrength] = useState(50); // 0-100 scale
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const newPreviews = [...facePreviews];
-        newPreviews[index] = reader.result as string;
-        setFacePreviews(newPreviews);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-  
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const validFiles = faceFiles.filter(f => f !== null) as File[];
-    if (validFiles.length > 0) {
-      onApplyFaceSwap(validFiles);
-    }
-  };
+    const [isDraggingTarget, setIsDraggingTarget] = useState(false);
+    const [isDraggingRefs, setIsDraggingRefs] = useState(false);
+    
+    const resetState = () => {
+        setTargetFile(null);
+        setTargetPreview(null);
+        setReferenceFiles([]);
+        setAnalysisState('idle');
+        setDetectedFaces([]);
+        setSelectedFaceMask(null);
+        setAnalysisError(null);
+        setExpressionOption('original');
+        setBlendingStrength(50);
+    };
 
-  const hasFiles = faceFiles.some(f => f !== null);
+    const handleTargetFileChange = async (file: File | null) => {
+        if (!file) return;
 
-  return (
-    <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
-      <h3 className="text-lg font-semibold text-center text-gray-300">Face Swap</h3>
-      <p className="text-sm text-center text-gray-400 -mt-2">Upload up to 3 reference images of the face from different angles (e.g., front, left side, right side) for a more accurate 3D-aware swap.</p>
-
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[0, 1, 2].map(index => (
-            <Tooltip key={index} text={`Angle ${index + 1}: For best results, use photos from different angles (front, side)`}>
-              <label
-                htmlFor={`face-swap-upload-${index}`}
-                className={`w-full p-4 h-32 flex items-center justify-center border-2 border-dashed border-gray-600 rounded-lg text-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/10 transition-colors ${isDraggingOver === index ? 'border-blue-400 bg-blue-500/10' : ''}`}
-                onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(index); }}
-                onDragLeave={() => setIsDraggingOver(null)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsDraggingOver(null);
-                  handleFileChange(e.dataTransfer.files?.[0] || null, index);
-                }}
-              >
-                {facePreviews[index] ? (
-                  <img src={facePreviews[index]} alt={`Face preview ${index + 1}`} className="max-h-full mx-auto rounded-md object-contain" />
-                ) : (
-                  <div className="flex flex-col items-center gap-2 text-gray-400">
-                    <UploadIcon className="w-8 h-8" />
-                    <span className="text-xs">Angle {index + 1}</span>
-                  </div>
-                )}
-              </label>
-            </Tooltip>
-          ))}
-        </div>
+        resetState();
+        setTargetFile(file);
+        setAnalysisState('analyzing');
         
-        {[0, 1, 2].map(index => (
-          <input key={index} id={`face-swap-upload-${index}`} type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e.target.files?.[0] || null, index)} disabled={isLoading} />
-        ))}
+        try {
+            const previewUrl = await fileToDataURL(file);
+            setTargetPreview(previewUrl);
 
-        {faceFiles.filter(f => f).length > 1 && (
-            <div className="flex items-center gap-2 text-sm text-cyan-300 bg-cyan-500/10 p-3 rounded-lg animate-fade-in">
-                <InformationCircleIcon className="w-5 h-5 flex-shrink-0" />
-                <span>Note: Using multiple reference images provides higher quality but may take longer to process.</span>
-            </div>
-        )}
+            const faces = await detectFaces(file);
+            if (faces.length === 0) {
+                setAnalysisError('Не удалось найти лица на целевом изображении. Пожалуйста, попробуйте другую фотографию.');
+                setAnalysisState('error');
+            } else {
+                setDetectedFaces(faces);
+                setAnalysisState('analyzed');
+                // Auto-select if only one face is found
+                if (faces.length === 1) {
+                    setSelectedFaceMask(faces[0].mask);
+                }
+            }
+        } catch(err: any) {
+            setAnalysisError(err.message);
+            setAnalysisState('error');
+        }
+    };
 
-        <Tooltip text="Apply the face swap using the uploaded reference images">
-          <button
-            type="submit"
-            className="w-full bg-gradient-to-br from-teal-600 to-cyan-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-cyan-500/20 hover:shadow-xl hover:shadow-cyan-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-teal-800 disabled:to-cyan-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2"
-            disabled={isLoading || !hasFiles}
-          >
-            <UserCircleIcon className="w-6 h-6"/>
-            Apply Face Swap
-          </button>
-        </Tooltip>
-      </form>
-    </div>
-  );
+    const handleReferenceFilesChange = (files: FileList | null) => {
+        if (!files || referenceFiles.length + files.length > 8) {
+            alert("Вы можете загрузить до 8 эталонных изображений.");
+            return;
+        }
+        
+        const newItems: ReferenceFile[] = [];
+        const fileArray = Array.from(files);
+        let filesProcessed = 0;
+
+        fileArray.forEach((file) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                newItems.push({
+                    id: `${file.name}-${Date.now()}-${Math.random()}`,
+                    file: file,
+                    preview: reader.result as string,
+                });
+                filesProcessed++;
+                if (filesProcessed === fileArray.length) {
+                    setReferenceFiles(prev => [...prev, ...newItems].slice(0, 8));
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+    };
+
+    const handleRemoveReferenceFile = (id: string) => {
+        setReferenceFiles(prev => prev.filter(item => item.id !== id));
+    }
+  
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const referenceDataUrls = referenceFiles.map(item => item.preview);
+        if (targetPreview && selectedFaceMask && referenceDataUrls.length > 0) {
+            onAddLayer({
+                name: `Замена лица`,
+                tool: 'faceSwap',
+                params: { 
+                    targetImageDataUrl: targetPreview,
+                    targetFaceMaskDataUrl: selectedFaceMask, 
+                    referenceFaceDataUrls: referenceDataUrls,
+                    options: {
+                        expression: expressionOption,
+                        blending: blendingStrength,
+                    }
+                }
+            });
+            resetState();
+        }
+    };
+    
+    const getBlendingDescription = (value: number) => {
+        if (value <= 33) return 'Приоритет плавного смешивания';
+        if (value >= 67) return 'Приоритет точного соответствия';
+        return 'Сбалансированный результат';
+    }
+
+    return (
+        <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col gap-4 animate-fade-in">
+            <h3 className="text-xl font-bold text-center text-text-primary">Интеллектуальная замена лица</h3>
+            
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                {/* --- STEP 1: TARGET IMAGE --- */}
+                <div className="p-3 bg-stone-50 rounded-lg border border-border-color">
+                    <h4 className="font-bold text-text-primary mb-2">Шаг 1: Загрузите целевое изображение</h4>
+                    <Tooltip side="left" text="Загрузите изображение, на котором вы хотите заменить лицо.">
+                        <div
+                            className={`relative w-full p-4 border-2 border-dashed rounded-lg text-center transition-colors ${isDraggingTarget ? 'border-primary bg-primary/10 animate-pulse' : 'border-border-color'} ${targetPreview ? '' : 'cursor-pointer hover:border-primary hover:bg-primary/10'}`}
+                            onDragOver={(e) => { e.preventDefault(); setIsDraggingTarget(true); }}
+                            onDragLeave={() => setIsDraggingTarget(false)}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                setIsDraggingTarget(false);
+                                handleTargetFileChange(e.dataTransfer.files?.[0] || null);
+                            }}
+                        >
+                             <input id="target-image-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleTargetFileChange(e.target.files?.[0] || null)} disabled={isLoading || analysisState === 'analyzing'} />
+                            { !targetPreview ? (
+                                <label htmlFor="target-image-upload" className="flex flex-col items-center gap-2 text-text-secondary py-4 cursor-pointer">
+                                    <UploadIcon className="w-8 h-8" />
+                                    <span>Загрузить или перетащить</span>
+                                </label>
+                            ) : (
+                                <div className="relative w-full max-h-48 flex items-center justify-center">
+                                    <img src={targetPreview} alt="Target preview" className="max-h-48 w-auto rounded-md object-contain" />
+                                    {analysisState === 'analyzing' && <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center rounded-md"><Spinner /><p className="text-white mt-2 text-sm">Анализ лиц...</p></div>}
+                                    {analysisState === 'analyzed' && (
+                                        <div className="absolute inset-0">
+                                            {detectedFaces.map(face => (
+                                                <button type="button" key={face.mask} onClick={() => setSelectedFaceMask(face.mask)} className={`absolute inset-0 transition-all duration-200 rounded-md ${selectedFaceMask === face.mask ? 'ring-4 ring-primary ring-inset bg-primary/20' : 'bg-black/50 hover:bg-primary/30'}`}>
+                                                    <img src={face.mask} alt="face mask" className="w-full h-full object-contain" style={{ mixBlendMode: 'screen', filter: 'brightness(0) invert(1)' }}/>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </Tooltip>
+                    {analysisState === 'analyzed' && (
+                         <p className="text-sm font-semibold text-center mt-2 text-text-secondary">{detectedFaces.length > 1 ? 'Лица обнаружены! Выберите то, которое нужно заменить.' : 'Лицо обнаружено и выбрано автоматически.'}</p>
+                    )}
+                    {analysisState === 'error' && (
+                        <div className="mt-2 p-2 bg-red-100 text-red-700 rounded-md text-sm flex items-center justify-center gap-2">
+                            <XCircleIcon className="w-5 h-5"/> {analysisError}
+                        </div>
+                    )}
+                </div>
+                
+                {/* --- STEP 2: REFERENCE FACES --- */}
+                <div className={`p-3 bg-stone-50 rounded-lg border border-border-color transition-opacity duration-300 ${!selectedFaceMask ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <h4 className="font-bold text-text-primary mb-2">Шаг 2: Загрузите эталонные лица ({referenceFiles.length}/8)</h4>
+                    <Tooltip side="left" text="Загрузите от 1 до 8 изображений лица, которое вы хотите использовать.">
+                        <label
+                            htmlFor="reference-faces-upload"
+                            className={`w-full p-4 border-2 border-dashed rounded-lg text-center transition-colors ${
+                                isDraggingRefs 
+                                    ? 'border-primary bg-primary/10 animate-pulse' 
+                                    : referenceFiles.length < 8 ? 'border-border-color cursor-pointer hover:border-primary hover:bg-primary/10' : 'border-gray-300 bg-stone-100 cursor-not-allowed'
+                            }`}
+                            onDragOver={(e) => { e.preventDefault(); if (referenceFiles.length < 8) setIsDraggingRefs(true); }}
+                            onDragLeave={() => setIsDraggingRefs(false)}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                setIsDraggingRefs(false);
+                                if (referenceFiles.length < 8) handleReferenceFilesChange(e.dataTransfer.files);
+                            }}
+                        >
+                            <div className="flex flex-col items-center gap-2 text-text-secondary">
+                                <UploadIcon className="w-8 h-8" />
+                                <span>Загрузить или перетащить</span>
+                            </div>
+                        </label>
+                    </Tooltip>
+                    <input id="reference-faces-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleReferenceFilesChange(e.target.files)} disabled={isLoading || referenceFiles.length >= 8 || !selectedFaceMask} multiple/>
+                    {referenceFiles.length > 0 && (
+                        <div className="mt-2 grid grid-cols-4 gap-2 p-2 bg-stone-100 rounded-lg max-h-48 overflow-y-auto border border-border-color">
+                            {referenceFiles.map(item => (
+                                <div key={item.id} className="relative group aspect-square">
+                                    <img src={item.preview} alt={item.file.name} className="w-full h-full object-cover rounded-md bg-stone-50" />
+                                    <Tooltip side="left" text={`Удалить ${item.file.name}`}>
+                                        <button type="button" onClick={() => handleRemoveReferenceFile(item.id)} disabled={isLoading} className="absolute top-1 right-1 p-1 bg-red-600/80 hover:bg-red-500 text-white rounded-full transition-all scale-0 group-hover:scale-100" aria-label={`Удалить ${item.file.name}`}>
+                                            <TrashIcon className="w-3 h-3"/>
+                                        </button>
+                                    </Tooltip>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* --- STEP 3: ADVANCED OPTIONS --- */}
+                <div className={`p-3 bg-stone-50 rounded-lg border border-border-color transition-opacity duration-300 ${!selectedFaceMask || referenceFiles.length === 0 ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <h4 className="font-bold text-text-primary mb-2">Шаг 3: Расширенные настройки (необязательно)</h4>
+                    <div className="flex flex-col gap-4">
+                        <div>
+                            <label className="block text-sm font-semibold text-text-primary mb-2">Управление выражением</label>
+                            <div className="flex bg-stone-200 p-1 rounded-lg">
+                                <button type="button" onClick={() => setExpressionOption('original')} className={`w-1/2 p-2 text-sm font-bold rounded-md transition-colors ${expressionOption === 'original' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:bg-stone-300'}`}>Сохранить оригинал</button>
+                                <button type="button" onClick={() => setExpressionOption('reference')} className={`w-1/2 p-2 text-sm font-bold rounded-md transition-colors ${expressionOption === 'reference' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:bg-stone-300'}`}>Взять с эталона</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label htmlFor="blending-strength" className="block text-sm font-semibold text-text-primary mb-2">
+                                Сила смешивания: <span className="font-normal text-text-secondary">{getBlendingDescription(blendingStrength)}</span>
+                            </label>
+                             <input
+                                id="blending-strength"
+                                type="range"
+                                min="0"
+                                max="100"
+                                value={blendingStrength}
+                                onChange={(e) => setBlendingStrength(Number(e.target.value))}
+                                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                            />
+                        </div>
+                    </div>
+                </div>
+                
+                {/* Submit Button */}
+                <Tooltip side="left" text="Заменить лицо на целевом изображении, используя эталонные лица.">
+                    <button
+                        type="submit"
+                        className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 h-[52px]"
+                        disabled={isLoading || !targetFile || !selectedFaceMask || referenceFiles.length === 0}
+                    >
+                        {isLoading ? <Spinner size="sm"/> : <><UserCircleIcon className="w-6 h-6"/> Заменить лицо</>}
+                    </button>
+                </Tooltip>
+            </form>
+        </div>
+    );
 };
 
 export default FaceSwapPanel;

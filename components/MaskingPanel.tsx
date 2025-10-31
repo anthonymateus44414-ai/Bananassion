@@ -4,84 +4,179 @@
 */
 import React from 'react';
 import Tooltip from './Tooltip';
-import { PaintBrushIcon, TrashIcon } from './icons';
+import { BrushShape } from '../types';
+import { CircleIcon, SquareIcon } from './icons';
 
 interface MaskingPanelProps {
-  brushSize: number;
   onBrushSizeChange: (size: number) => void;
-  onClearMask: () => void;
+  brushSize: number;
+  onBrushShapeChange: (shape: BrushShape) => void;
+  brushShape: BrushShape;
+  onBrushHardnessChange: (hardness: number) => void;
+  brushHardness: number;
+  onOpacityChange: (opacity: number) => void;
+  previewOpacity: number;
+  onConfirm: () => void;
   onCancel: () => void;
-  onDone: () => void;
-  isErasing: boolean;
-  onToggleErase: () => void;
+  isLoading: boolean;
 }
 
 const MaskingPanel: React.FC<MaskingPanelProps> = ({
-  brushSize,
   onBrushSizeChange,
-  onClearMask,
+  brushSize,
+  onBrushShapeChange,
+  brushShape,
+  onBrushHardnessChange,
+  brushHardness,
+  onOpacityChange,
+  previewOpacity,
+  onConfirm,
   onCancel,
-  onDone,
-  isErasing,
-  onToggleErase,
+  isLoading,
 }) => {
+
+  const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onBrushSizeChange(parseInt(e.target.value, 10));
+  };
+  
+  const handleHardnessChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onBrushHardnessChange(parseFloat(e.target.value));
+  };
+
+  const handleOpacityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onOpacityChange(parseFloat(e.target.value));
+  };
+
+  // Map brush size (5-100) to a preview size (e.g., 4-40px)
+  const previewSize = (brushSize / 100) * 40;
+
   return (
-    <div className="w-full max-w-lg bg-gray-800/80 border border-gray-700 rounded-lg p-4 flex flex-col items-center gap-4 animate-fade-in backdrop-blur-sm shadow-2xl">
-      <h3 className="text-lg font-semibold text-gray-200">Draw Mask</h3>
-      <p className="text-sm text-gray-400 -mt-2">Paint over the area you want to edit.</p>
-      
-      <div className="w-full flex items-center gap-4">
-          <Tooltip text={isErasing ? 'Switch to Brush to add to the mask' : 'Switch to Eraser to remove from the mask'}>
-              <button
-                  onClick={onToggleErase}
-                  className={`p-3 rounded-lg transition-colors ${isErasing ? 'bg-red-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-              >
-                  <PaintBrushIcon className="w-6 h-6" />
-                  {isErasing && <div className="absolute w-full h-0.5 bg-white rotate-45 top-1/2 left-0 transform -translate-y-1/2"></div>}
-              </button>
-          </Tooltip>
+    <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col items-center gap-4 animate-fade-in text-text-primary">
+        <h3 className="text-xl font-bold text-center">Режим маски</h3>
+        <p className="text-sm text-center text-text-secondary -mt-2">
+            Закрасьте область, которую хотите отредактировать. Используйте прокрутку для масштабирования.
+        </p>
         
-        <div className="flex-grow flex items-center gap-3">
-            <label htmlFor="brushSize" className="text-sm font-medium text-gray-300">Brush Size</label>
+        {/* Brush Size Slider with Visual Preview */}
+        <div className="w-full flex flex-col items-center gap-2">
+            <div className="w-full flex justify-between items-center mb-1">
+                <label htmlFor="brush-size" className="text-sm font-semibold">
+                    Размер кисти: {brushSize}
+                </label>
+                <div className="w-12 h-12 flex items-center justify-center bg-stone-100 rounded-md border border-border-color">
+                    <div
+                        className={`${brushShape === 'circle' ? 'rounded-full' : 'rounded-sm'}`}
+                        style={{
+                            width: `${previewSize}px`,
+                            height: `${previewSize}px`,
+                            background: brushShape === 'circle'
+                                ? `radial-gradient(circle, rgba(107, 114, 128, 1) ${brushHardness * 100}%, rgba(107, 114, 128, 0) 100%)`
+                                : 'rgb(107, 114, 128)',
+                            transition: 'width 0.1s ease, height 0.1s ease'
+                        }}
+                        aria-hidden="true"
+                    ></div>
+                </div>
+            </div>
             <input
-                id="brushSize"
+                id="brush-size"
                 type="range"
                 min="5"
                 max="100"
                 value={brushSize}
-                onChange={(e) => onBrushSizeChange(parseInt(e.target.value, 10))}
-                className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+                onChange={handleSizeChange}
+                disabled={isLoading}
+                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
             />
         </div>
 
-        <Tooltip text="Erase everything you have painted on the mask">
-            <button
-                onClick={onClearMask}
-                className="p-3 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
-            >
-                <TrashIcon className="w-6 h-6" />
-            </button>
-        </Tooltip>
-      </div>
+        {/* Brush Hardness Slider */}
+        <div className="w-full flex flex-col items-center gap-2">
+            <label htmlFor="brush-hardness" className="text-sm font-semibold w-full text-left">
+                Жесткость кисти: {Math.round(brushHardness * 100)}%
+            </label>
+            <input
+                id="brush-hardness"
+                type="range"
+                min="0.1"
+                max="1.0"
+                step="0.05"
+                value={brushHardness}
+                onChange={handleHardnessChange}
+                disabled={isLoading || brushShape === 'square'}
+                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+            />
+        </div>
 
-      <div className="w-full flex items-center justify-center gap-3 mt-2">
-        <Tooltip text="Discard the mask and return to the tool options">
+        {/* Opacity Slider */}
+        <div className="w-full flex flex-col items-center gap-2">
+            <label htmlFor="preview-opacity" className="text-sm font-semibold w-full text-left">
+            Прозрачность предпросмотра: {Math.round(previewOpacity * 100)}%
+            </label>
+            <input
+                id="preview-opacity"
+                type="range"
+                min="0.1"
+                max="1.0"
+                step="0.05"
+                value={previewOpacity}
+                onChange={handleOpacityChange}
+                disabled={isLoading}
+                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+            />
+        </div>
+
+        {/* Brush Shape Selection */}
+        <div className="w-full flex flex-col items-center gap-3">
+            <span className="text-sm font-semibold">Форма кисти</span>
+            <div className="flex items-center gap-4">
+                <Tooltip side="left" text="Круглая кисть (Рисовать)">
+                    <button
+                        onClick={() => onBrushShapeChange('circle')}
+                        className={`p-3 rounded-lg transition-all duration-200 border-2 ${
+                            brushShape === 'circle'
+                                ? 'bg-primary text-white border-primary ring-2 ring-offset-2 ring-primary'
+                                : 'bg-stone-50 text-text-secondary border-border-color hover:bg-stone-100'
+                        }`}
+                    >
+                        <CircleIcon className="w-6 h-6" />
+                    </button>
+                </Tooltip>
+                <Tooltip side="left" text="Квадратная кисть (Стирать)">
+                    <button
+                        onClick={() => onBrushShapeChange('square')}
+                        className={`p-3 rounded-lg transition-all duration-200 border-2 ${
+                            brushShape === 'square'
+                                ? 'bg-primary text-white border-primary ring-2 ring-offset-2 ring-primary'
+                                : 'bg-stone-50 text-text-secondary border-border-color hover:bg-stone-100'
+                        }`}
+                    >
+                        <SquareIcon className="w-6 h-6" />
+                    </button>
+                </Tooltip>
+            </div>
+        </div>
+
+        <div className="w-full flex justify-center gap-4 mt-2">
+            <Tooltip side="left" text="Отменить маскирование и вернуться к параметрам инструмента">
             <button
-              onClick={onCancel}
-              className="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-lg transition-colors active:scale-95"
+                onClick={onCancel}
+                disabled={isLoading}
+                className="w-full bg-stone-200 hover:bg-stone-300 font-bold py-3 px-6 rounded-lg transition-colors active:scale-[0.98] disabled:opacity-50"
             >
-              Cancel
+                Отмена
             </button>
-        </Tooltip>
-        <Tooltip text="Confirm the masked area and return to the tool options">
+            </Tooltip>
+            <Tooltip side="left" text="Подтвердить выбранную маску и продолжить редактирование">
             <button
-              onClick={onDone}
-              className="w-full bg-gradient-to-br from-green-600 to-green-500 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-green-500/20 hover:shadow-xl active:scale-95"
+                onClick={onConfirm}
+                disabled={isLoading}
+                className="w-full bg-primary hover:bg-primary-hover text-white font-bold py-3 px-6 rounded-lg transition-colors active:scale-[0.98] disabled:opacity-50"
             >
-              Done
+                Подтвердить
             </button>
-        </Tooltip>
-      </div>
+            </Tooltip>
+        </div>
     </div>
   );
 };

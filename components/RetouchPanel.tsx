@@ -6,16 +6,18 @@
 import React, { useState } from 'react';
 import Tooltip from './Tooltip';
 import { PaintBrushIcon } from './icons';
+import { Layer } from '../types';
+import Spinner from './Spinner';
 
 interface RetouchPanelProps {
-  onApplyRetouch: (prompt: string, mask: string) => void;
+  onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
   isLoading: boolean;
   maskDataUrl: string | null;
   onToggleMasking: () => void;
 }
 
 const RetouchPanel: React.FC<RetouchPanelProps> = ({ 
-  onApplyRetouch, 
+  onAddLayer, 
   isLoading,
   maskDataUrl,
   onToggleMasking
@@ -25,55 +27,59 @@ const RetouchPanel: React.FC<RetouchPanelProps> = ({
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (maskDataUrl && retouchPrompt.trim()) {
-            onApplyRetouch(retouchPrompt, maskDataUrl);
+            onAddLayer({
+              name: `Ретушь: ${retouchPrompt.slice(0, 20)}...`,
+              tool: 'retouch',
+              params: { prompt: retouchPrompt, mask: maskDataUrl }
+            });
             setRetouchPrompt('');
         }
     };
 
     return (
-        <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
-            <h3 className="text-lg font-semibold text-center text-gray-300">Retouch Area</h3>
-            <p className="text-sm text-center text-gray-400 -mt-2">
-                {maskDataUrl ? "An area is selected. Describe the change below." : "Select an area on the image to edit."}
+        <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col gap-4 animate-fade-in">
+            <h3 className="text-xl font-bold text-center text-text-primary">Ретушь области</h3>
+            <p className="text-sm text-center text-text-secondary -mt-2">
+                {maskDataUrl ? "Область выбрана. Опишите изменение ниже." : "Выберите область на изображении для редактирования."}
             </p>
 
             <div className="flex flex-col items-center gap-4">
-                <Tooltip text={maskDataUrl ? "Redraw the selected area" : "Select an area to edit"}>
+                <Tooltip side="left" text={maskDataUrl ? "Перерисовать выделенную область" : "Выбрать область для редактирования"}>
                     <button
                         onClick={onToggleMasking}
-                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 px-5 rounded-lg transition-colors text-base"
+                        className="flex items-center gap-2 bg-secondary hover:bg-[#4B5563] text-white font-bold py-3 px-5 rounded-lg transition-colors text-base"
                         disabled={isLoading}
                     >
                         <PaintBrushIcon className="w-5 h-5"/>
-                        {maskDataUrl ? 'Reselect Area' : 'Select Area'}
+                        {maskDataUrl ? 'Выбрать заново' : 'Выбрать область'}
                     </button>
                 </Tooltip>
 
                 {maskDataUrl && (
-                    <div className="w-24 h-24 border-2 border-gray-600 rounded-md p-1 bg-black/20">
+                    <div className="w-24 h-24 border-2 border-border-color rounded-md p-1 bg-stone-100">
                         <img src={maskDataUrl} alt="Mask preview" className="w-full h-full object-contain" />
                     </div>
                 )}
 
-                <form onSubmit={handleSubmit} className="w-full flex gap-2">
-                   <Tooltip text="Describe the change, e.g., 'remove the car', 'change shirt color to blue'">
+                <form onSubmit={handleSubmit} className="w-full flex flex-col gap-2">
+                   <Tooltip side="left" text="Опишите изменение, например, 'удалить машину', 'изменить цвет рубашки на синий'">
                         <input
                             type="text"
                             value={retouchPrompt}
                             onChange={(e) => setRetouchPrompt(e.target.value)}
-                            placeholder="e.g., 'remove this blemish'"
-                            className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base"
+                            placeholder="например, 'убрать этот дефект'"
+                            className="flex-grow bg-stone-50 border-2 border-border-color text-text-primary rounded-lg p-3 focus:ring-2 ring-primary focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base font-medium"
                             disabled={isLoading || !maskDataUrl}
                             autoFocus
                         />
                     </Tooltip>
-                    <Tooltip text="Apply the retouching prompt to the selected area">
+                    <Tooltip side="left" text="Применить подсказку ретуши к выделенной области">
                         <button
                             type="submit"
-                            className="bg-gradient-to-br from-blue-600 to-blue-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/20 hover:shadow-xl active:scale-95 disabled:opacity-50"
+                            className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center h-[52px]"
                             disabled={isLoading || !retouchPrompt.trim() || !maskDataUrl}
                         >
-                            Apply
+                            {isLoading ? <Spinner size="sm" /> : 'Добавить слой'}
                         </button>
                     </Tooltip>
                 </form>

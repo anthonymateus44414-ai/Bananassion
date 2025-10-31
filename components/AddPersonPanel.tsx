@@ -1,3 +1,5 @@
+
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -6,13 +8,15 @@
 import React, { useState } from 'react';
 import { UploadIcon } from './icons';
 import Tooltip from './Tooltip';
+import { Layer } from '../types';
+import Spinner from './Spinner';
 
 interface AddPersonPanelProps {
-  onApplyAddPerson: (personFile: File, prompt: string) => void;
+  onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
   isLoading: boolean;
 }
 
-const AddPersonPanel: React.FC<AddPersonPanelProps> = ({ onApplyAddPerson, isLoading }) => {
+const AddPersonPanel: React.FC<AddPersonPanelProps> = ({ onAddLayer, isLoading }) => {
   const [personFile, setPersonFile] = useState<File | null>(null);
   const [personPreview, setPersonPreview] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -32,20 +36,24 @@ const AddPersonPanel: React.FC<AddPersonPanelProps> = ({ onApplyAddPerson, isLoa
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (personFile && prompt.trim()) {
-      onApplyAddPerson(personFile, prompt);
+      onAddLayer({
+        name: `Add Person: ${prompt.slice(0, 20)}...`,
+        tool: 'addPerson',
+        params: { personDataUrl: personPreview, prompt }
+      });
     }
   };
 
   return (
-    <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
-      <h3 className="text-lg font-semibold text-center text-gray-300">Add Person</h3>
-      <p className="text-sm text-center text-gray-400 -mt-2">Upload a reference image of a person to add to the scene. The AI will automatically remove their background.</p>
+    <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col gap-4 animate-fade-in">
+      <h3 className="text-xl font-bold text-center text-text-primary">Добавить человека</h3>
+      <p className="text-sm text-center text-text-secondary -mt-2">Загрузите эталонное изображение человека для добавления на сцену. ИИ автоматически удалит фон.</p>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <Tooltip text="Upload a photo of the person you want to add. Their background will be removed automatically.">
+        <Tooltip side="left" text="Загрузите фото человека, которого хотите добавить. Его фон будет удален автоматически.">
           <label
             htmlFor="person-upload"
-            className={`w-full p-6 border-2 border-dashed border-gray-600 rounded-lg text-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/10 transition-colors ${isDraggingOver ? 'border-blue-400 bg-blue-500/10' : ''}`}
+            className={`w-full p-6 border-2 border-dashed rounded-lg text-center cursor-pointer hover:border-primary hover:bg-primary/10 transition-colors ${isDraggingOver ? 'border-primary bg-primary/10 animate-pulse' : 'border-border-color'}`}
             onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
             onDragLeave={() => setIsDraggingOver(false)}
             onDrop={(e) => {
@@ -57,33 +65,33 @@ const AddPersonPanel: React.FC<AddPersonPanelProps> = ({ onApplyAddPerson, isLoa
             {personPreview ? (
               <img src={personPreview} alt="Person preview" className="max-h-32 mx-auto rounded-md object-contain" />
             ) : (
-              <div className="flex flex-col items-center gap-2 text-gray-400">
+              <div className="flex flex-col items-center gap-2 text-text-secondary">
                 <UploadIcon className="w-8 h-8" />
-                <span>Upload Reference Image</span>
+                <span>Загрузить эталонное изображение</span>
               </div>
             )}
           </label>
         </Tooltip>
         <input id="person-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e.target.files?.[0] || null)} disabled={isLoading} />
         
-        <Tooltip text="Describe placement and scale, e.g., 'add her standing on the left, looking at the camera'">
+        <Tooltip side="left" text="Опишите размещение и масштаб, например, 'добавить ее стоящей слева, смотрящей в камеру'">
             <input
               type="text"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="e.g., 'add this person standing on the right'"
-              className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base"
+              placeholder="например, 'добавить этого человека стоящим справа'"
+              className="flex-grow bg-stone-50 border-2 border-border-color text-text-primary rounded-lg p-3 focus:ring-2 ring-primary focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base"
               disabled={isLoading}
             />
         </Tooltip>
 
-        <Tooltip text="Add the person from the reference image to the main scene">
+        <Tooltip side="left" text="Добавить человека с эталонного изображения на основную сцену">
             <button
               type="submit"
-              className="w-full bg-gradient-to-br from-blue-600 to-blue-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-blue-800 disabled:to-blue-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
+              className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center h-[52px]"
               disabled={isLoading || !personFile || !prompt.trim()}
             >
-              Add Person to Scene
+              {isLoading ? <Spinner size="sm" /> : 'Добавить слой'}
             </button>
         </Tooltip>
       </form>

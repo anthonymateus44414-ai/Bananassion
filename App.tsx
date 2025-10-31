@@ -2,740 +2,1079 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
+import React, { useState, useEffect, useCallback, useRef, useMemo, useReducer } from 'react';
+import StartScreen from './components/StartScreen.tsx';
+import Header from './components/Header.tsx';
+import ToolsPalette from './components/ToolsPalette.tsx';
+import EditorCanvas from './components/EditorCanvas.tsx';
+import RightSidebar from './components/RightSidebar.tsx';
+import BatchEditor from './components/BatchEditor.tsx';
+import Spinner from './components/Spinner.tsx';
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
-import {
-  generateImageFromPrompt,
-  generateFilteredImage,
-  generateAdjustedImage,
-  generateEditedImage,
-  generateReplacedBackground,
-  generateReplacedBackgroundFromImage,
-  generateTransparentBackground,
-  generateClothingChange,
-  generateEnhancedImage,
-  generateAreaEnhancement,
-  generateFaceSwap,
-  generateNewAngleImage,
-  generateAddedPerson,
-  generateAddedObjectFromText,
-  generateAddedObjectFromUpload,
-  generateColorAdjustedImage,
-  generateColorizedImage,
-  generateExpandedImage,
-  generateUncroppedImage,
-  generateFacialEnhancement,
-  generateMixedImage,
-  generateStyledImage,
-} from './services/geminiService';
-import { Tool, Hotspot, EditorMode, CustomStyle } from './types';
-import { dataURLtoFile, createStyleThumbnail } from './utils';
+import { Tool, Layer, Hotspot, CustomStyle, ProjectState, BrushShape, DetectedObject } from './types.ts';
+import { dataURLtoFile, fileToDataURL, createStyleThumbnail, applyCrop, downscaleImage, createGeminiBlob, decode, decodeAudioData } from './utils.ts';
+import * as geminiService from './services/geminiService.ts';
+// FIX: The 'LiveSession' type is not exported from the '@google/genai' module.
+// It has been removed from the import statement to resolve the error.
+import { GoogleGenAI, Modality } from '@google/genai';
+import Konva from 'konva';
+import { XCircleIcon } from './components/icons.tsx';
 
-// Import components
-import Header from './components/Header';
-import StartScreen from './components/StartScreen';
-import EditorCanvas, { EditorCanvasHandles } from './components/EditorCanvas';
-import Toolbar from './components/Toolbar';
-import FilterPanel from './components/FilterPanel';
-import AdjustmentPanel from './components/AdjustmentPanel';
-import CropPanel from './components/CropPanel';
-import BackgroundPanel from './components/BackgroundPanel';
-import ClothingPanel from './components/ClothingPanel';
-import EnhancePanel from './components/EnhancePanel';
-import FaceSwapPanel from './components/FaceSwapPanel';
-import AnglePanel from './components/AnglePanel';
-import AddPersonPanel from './components/AddPersonPanel';
-import AddObjectPanel from './components/AddObjectPanel';
-import ColorPanel from './components/ColorPanel';
-import ExpandPanel from './components/ExpandPanel';
-import Spinner from './components/Spinner';
-import Tooltip from './components/Tooltip';
-import BatchEditor from './components/BatchEditor';
-import MaskingPanel from './components/MaskingPanel';
-import RetouchPanel from './components/RetouchPanel';
-import FacialPanel from './components/FacialPanel';
-import MixPanel from './components/MixPanel';
-import RemoveBackgroundPanel from './components/RemoveBackgroundPanel';
-import ColorizePanel from './components/ColorizePanel';
-import TrainPanel from './components/TrainPanel';
+// --- State Management Reducer ---
 
-const HISTORY_STORAGE_KEY = 'pixshop-session';
-const STYLES_STORAGE_KEY = 'pixshop-custom-styles';
-const MAX_HISTORY_LENGTH = 10; // Limit both in-memory and stored history
+type HistoryState = {
+    past: Layer[][];
+    present: Layer[];
+    future: Layer[][];
+};
+
+type LayerAction =
+    | { type: 'ADD'; payload: Omit<Layer, 'id' | 'isVisible' | 'cachedResult'> }
+    | { type: 'REMOVE'; payload: { layerId: string } }
+    | { type: 'REORDER'; payload: { newOrder: Layer[] } }
+    | { type: 'TOGGLE_VISIBILITY'; payload: { layerId: string } }
+    | { type: 'RESET' }
+    | { type: 'UPDATE_CACHED_RESULT'; payload: { layerId: string; cachedResult: string | null } }
+    | { type: 'CLEAR_VISIBLE_CACHE' }
+    | { type: 'UPDATE_LAYER_TRANSFORM'; payload: { layerId: string; transform: Layer['transform'] } };
+
+type HistoryAction = LayerAction | { type: 'UNDO' } | { type: 'REDO' } | { type: 'SET_HISTORY'; payload: HistoryState };
+
+const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
+    switch (action.type) {
+        case 'ADD': {
+            const newLayer: Layer = { ...action.payload, id: Date.now().toString(), isVisible: true };
+            return [...state, newLayer];
+        }
+        case 'REMOVE': {
+            const layerIndex = state.findIndex(l => l.id === action.payload.layerId);
+            if (layerIndex === -1) return state;
+
+            // When a layer is removed, the input for all subsequent layers changes.
+            // We must filter out the removed layer and then clear the cache for all
+            // layers that were positioned at or after the original index.
+            const newLayers = state.filter((_, index) => index !== layerIndex);
+            return newLayers.map((layer, newIndex) => {
+                if (newIndex >= layerIndex && layer.tool !== 'image') {
+                    return { ...layer, cachedResult: undefined };
+                }
+                return layer;
+            });
+        }
+        case 'REORDER': {
+            const newOrder = action.payload.newOrder;
+            let firstChangeIndex = -1;
+            const shorterLength = Math.min(state.length, newOrder.length);
+            for (let i = 0; i < shorterLength; i++) {
+                if (state[i].id !== newOrder[i].id) {
+                    firstChangeIndex = i;
+                    break;
+                }
+            }
+            if (firstChangeIndex === -1 && state.length !== newOrder.length) {
+                firstChangeIndex = shorterLength;
+            }
+            if (firstChangeIndex !== -1) {
+                return newOrder.map((l, i) =>
+                    i >= firstChangeIndex && l.tool !== 'image' ? { ...l, cachedResult: undefined } : l
+                );
+            }
+            return newOrder;
+        }
+        case 'TOGGLE_VISIBILITY': {
+            const layerIndex = state.findIndex(l => l.id === action.payload.layerId);
+            if (layerIndex === -1) return state;
+
+            return state.map((layer, index) => {
+                // Layers before the toggled one are unaffected.
+                if (index < layerIndex) {
+                    return layer;
+                }
+                // For the target layer and all subsequent layers, invalidate the cache.
+                const newLayer = (layer.tool !== 'image') ? { ...layer, cachedResult: undefined } : { ...layer };
+                // For the target layer specifically, also toggle its visibility.
+                if (index === layerIndex) {
+                    newLayer.isVisible = !layer.isVisible;
+                }
+                return newLayer;
+            });
+        }
+        case 'RESET': {
+             return [];
+        }
+        case 'UPDATE_CACHED_RESULT': {
+            return state.map(l =>
+                l.id === action.payload.layerId
+                    ? { ...l, cachedResult: action.payload.cachedResult ?? undefined }
+                    : l
+            );
+        }
+        case 'CLEAR_VISIBLE_CACHE': {
+            let hasChanged = false;
+            const newLayers = state.map(layer => {
+                if (layer.isVisible && layer.cachedResult && layer.tool !== 'image') {
+                    hasChanged = true;
+                    return { ...layer, cachedResult: undefined };
+                }
+                return layer;
+            });
+            return hasChanged ? newLayers : state;
+        }
+        case 'UPDATE_LAYER_TRANSFORM': {
+            return state.map(l =>
+                l.id === action.payload.layerId
+                    ? { ...l, transform: action.payload.transform }
+                    : l
+            );
+        }
+        default:
+            return state;
+    }
+};
+
+const historyReducer = (state: HistoryState, action: HistoryAction): HistoryState => {
+    const { past, present, future } = state;
+
+    switch (action.type) {
+        case 'UNDO': {
+            if (past.length === 0) return state;
+            const previous = past[past.length - 1];
+            const newPast = past.slice(0, past.length - 1);
+            return {
+                past: newPast,
+                present: previous,
+                future: [present, ...future],
+            };
+        }
+        case 'REDO': {
+            if (future.length === 0) return state;
+            const next = future[0];
+            const newFuture = future.slice(1);
+            return {
+                past: [...past, present],
+                present: next,
+                future: newFuture,
+            };
+        }
+        case 'SET_HISTORY': {
+            return action.payload;
+        }
+        case 'UPDATE_CACHED_RESULT': {
+            const newPresent = layersReducer(present, action);
+            return { ...state, present: newPresent };
+        }
+        case 'RESET': {
+             if (present.length === 0) return state;
+             return {
+                past: [...past, present],
+                present: [],
+                future: [],
+            };
+        }
+        default: {
+            const newPresent = layersReducer(present, action as LayerAction);
+            if (newPresent === present) {
+                return state;
+            }
+            return {
+                past: [...past, present],
+                present: newPresent,
+                future: [],
+            };
+        }
+    }
+};
+
+const initialHistory: HistoryState = {
+    past: [],
+    present: [],
+    future: [],
+};
+
 
 const App: React.FC = () => {
-    const [history, setHistory] = useState<string[]>([]);
-    const [historyIndex, setHistoryIndex] = useState(-1);
-    
+    // State management
+    const [imageFiles, setImageFiles] = useState<File[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState('Processing...');
     const [error, setError] = useState<string | null>(null);
-    const [activeTool, setActiveTool] = useState<Tool>(null);
+    const [activeTool, setActiveTool] = useState<Tool>('adjust');
+    const [isFastMode, setIsFastMode] = useState(true);
     
+    // Reducer for layer history
+    const [history, dispatch] = useReducer(historyReducer, initialHistory);
+
+    // Canvas state
+    const [stageState, setStageState] = useState({ scale: 1, x: 0, y: 0 });
     const [editHotspot, setEditHotspot] = useState<Hotspot | null>(null);
-
-    // Batch Mode
-    const [isBatchMode, setIsBatchMode] = useState(false);
-    const [batchFiles, setBatchFiles] = useState<File[]>([]);
-    
-    // Masking
-    const [editorMode, setEditorMode] = useState<EditorMode>('normal');
+    const [isMasking, setIsMasking] = useState(false);
     const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null);
-    const [maskBrushSize, setMaskBrushSize] = useState(40);
-    const [isErasing, setIsErasing] = useState(false);
-
-    // Cropping
-    const [aspect, setAspect] = useState<number | undefined>();
-    const [crop, setCrop] = useState<Crop>();
-    const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null);
-    const editorCanvasRef = useRef<EditorCanvasHandles>(null);
-
-    // Custom AI Styles
-    const [customStyles, setCustomStyles] = useState<CustomStyle[]>([]);
+    const [brushSize, setBrushSize] = useState(30);
+    const [brushShape, setBrushShape] = useState<BrushShape>('circle');
+    const [brushHardness, setBrushHardness] = useState(1.0);
+    const [maskPreviewOpacity, setMaskPreviewOpacity] = useState(0.5);
+    const [isFindingObjects, setIsFindingObjects] = useState(false);
+    const [detectedObjects, setDetectedObjects] = useState<DetectedObject[] | null>(null);
+    const [selectedObjectMasks, setSelectedObjectMasks] = useState<string[]>([]);
+    const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
     
-    // Real-time color adjustments for preview
-    const [colorAdjustments, setColorAdjustments] = useState({ hue: 0, saturation: 0, brightness: 0 });
+    // UI state
 
-    // Side-by-side comparison mode
-    const [isComparing, setIsComparing] = useState(false);
+    // CSS Inspector State
+    const [isInspecting, setIsInspecting] = useState(false);
+    const [inspectionResult, setInspectionResult] = useState<{ name: string; mask: string | null; css: object | null; error: string | null; } | null>(null);
 
-    // Interactive background effect
+    // Transcription & Voice Command State
+    const [transcriptionStatus, setTranscriptionStatus] = useState<'idle' | 'recording' | 'transcribing' | 'done' | 'error'>('idle');
+    const [transcribedText, setTranscribedText] = useState('');
+    const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+    const [voiceCommandFeedback, setVoiceCommandFeedback] = useState<string | null>(null);
+
+    // Refs for audio processing and live session
+    const sessionPromiseRef = useRef<Promise<any> | null>(null);
+    const inputAudioContextRef = useRef<AudioContext | null>(null);
+    const outputAudioContextRef = useRef<AudioContext | null>(null);
+    const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+    const mediaStreamRef = useRef<MediaStream | null>(null);
+    const currentCommandRef = useRef('');
+    const voiceCommandDebounceRef = useRef<number | null>(null);
+    const nextStartTimeRef = useRef(0);
+    const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+
+    const baseImage = imageFiles.length > 0 ? imageFiles[0] : null;
+
+    // Memoize the object URL for the base image to prevent leaks and re-renders
+    const baseImageUrl = useMemo(() => {
+        if (baseImage) return URL.createObjectURL(baseImage);
+        return '';
+    }, [baseImage]);
+
     useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
-          const { clientX, clientY } = e;
-          const { innerWidth, innerHeight } = window;
-          const x = (clientX / innerWidth) - 0.5;
-          const y = (clientY / innerHeight) - 0.5;
-          
-          document.documentElement.style.setProperty('--mouse-x', x.toString());
-          document.documentElement.style.setProperty('--mouse-y', y.toString());
-        };
-    
-        window.addEventListener('mousemove', handleMouseMove);
-    
+        // Clean up the object URL when the component unmounts or the URL changes
         return () => {
-          window.removeEventListener('mousemove', handleMouseMove);
-        };
-    }, []);
-
-    // Load session history from local storage
-    useEffect(() => {
-        if (isBatchMode) return;
-        try {
-            const savedSession = localStorage.getItem(HISTORY_STORAGE_KEY);
-            if (savedSession) {
-                const { history: savedHistory, historyIndex: savedIndex } = JSON.parse(savedSession);
-                if (Array.isArray(savedHistory) && typeof savedIndex === 'number' && savedHistory.length > 0) {
-                    setHistory(savedHistory);
-                    setHistoryIndex(savedIndex);
-                }
+            if (baseImageUrl) {
+                URL.revokeObjectURL(baseImageUrl);
             }
-        } catch (err) {
-            console.error("Failed to load session from local storage:", err);
-            localStorage.removeItem(HISTORY_STORAGE_KEY);
-        }
-    }, [isBatchMode]);
-
-    // Save session history to local storage
+        };
+    }, [baseImageUrl]);
+    
     useEffect(() => {
-        if (isBatchMode || history.length === 0) {
-            localStorage.removeItem(HISTORY_STORAGE_KEY);
+        if (voiceCommandFeedback) {
+            const timer = setTimeout(() => {
+                setVoiceCommandFeedback(null);
+            }, 4000);
+            return () => clearTimeout(timer);
+        }
+    }, [voiceCommandFeedback]);
+
+    const canvasRef = useRef<Konva.Stage>(null);
+    const isInitialFastModeMount = useRef(true);
+
+    useEffect(() => {
+        // On subsequent renders (not the initial one), if isFastMode changes,
+        // we clear the cache to force reprocessing. This is crucial for switching
+        // between low-res previews and high-res final outputs.
+        if (isInitialFastModeMount.current) {
+            isInitialFastModeMount.current = false;
             return;
         }
 
-        // Make a copy to mutate
-        let historyToSave = [...history];
-        let indexToSave = historyIndex;
-
-        while (historyToSave.length > 0) {
-            try {
-                const sessionData = JSON.stringify({ history: historyToSave, historyIndex: indexToSave });
-                localStorage.setItem(HISTORY_STORAGE_KEY, sessionData);
-                
-                if (historyToSave.length < history.length) {
-                    console.warn(`Session saved, but history was truncated from ${history.length} to ${historyToSave.length} items to fit storage quota.`);
-                }
-                return; // Success, exit the effect
-            } catch (err: any) {
-                if (err instanceof DOMException && (err.name === 'QuotaExceededError' || err.code === 22)) {
-                    if (historyToSave.length > 1) {
-                        console.warn(`Quota exceeded with ${historyToSave.length} items. Removing oldest and retrying.`);
-                        historyToSave.shift(); // Remove the oldest item
-                        indexToSave = Math.max(0, indexToSave - 1); // Decrement index if it was affected
-                    } else {
-                        console.error("Failed to save session: a single image history item exceeds local storage quota.");
-                        localStorage.removeItem(HISTORY_STORAGE_KEY);
-                        return;
-                    }
-                } else {
-                    console.error("Failed to save session to local storage:", err);
-                    return;
-                }
-            }
+        if (history.present.some(l => l.cachedResult)) {
+            dispatch({ type: 'CLEAR_VISIBLE_CACHE' });
         }
-    }, [history, historyIndex, isBatchMode]);
-    
-    // Load custom styles from local storage
-    useEffect(() => {
-        try {
-            const savedStyles = localStorage.getItem(STYLES_STORAGE_KEY);
-            if (savedStyles) {
-                const parsedStyles = JSON.parse(savedStyles);
-                if (Array.isArray(parsedStyles)) {
-                    setCustomStyles(parsedStyles);
-                }
+        // We intentionally omit history.present from dependencies to only run this effect
+        // when isFastMode changes.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isFastMode, dispatch]);
+
+    const applyLayer = useCallback(async (layer: Layer, inputFile: File): Promise<string | null> => {
+        const { tool, params } = layer;
+        switch(tool) {
+            case 'adjust': return geminiService.generateAdjustedImage(inputFile, params.prompt);
+            case 'retouch': return geminiService.generateEditedImage(inputFile, params.prompt, dataURLtoFile(params.mask, 'mask.png'));
+            case 'textEdit': return geminiService.generateTextEdit(inputFile, params.prompt);
+            case 'magicEraser': return geminiService.generateInpaintedImage(inputFile, dataURLtoFile(params.mask, 'mask.png'), params.fillPrompt);
+            case 'facial': return geminiService.generateFacialEnhancement(inputFile, params.prompt, dataURLtoFile(params.mask, 'mask.png'));
+            case 'faceSwap': {
+                const targetImageFile = await dataURLtoFile(params.targetImageDataUrl, 'target-face-swap.png');
+                const maskFile = await dataURLtoFile(params.targetFaceMaskDataUrl, 'target-face-mask.png');
+                const referenceFaceFiles = await Promise.all(params.referenceFaceDataUrls.map((url: string, i: number) => dataURLtoFile(url, `ref-face-${i}.png`)));
+                return geminiService.generateFaceSwap(targetImageFile, referenceFaceFiles, maskFile, params.options);
             }
-        } catch (err) {
-            console.error("Failed to load custom styles from local storage:", err);
-            localStorage.removeItem(STYLES_STORAGE_KEY);
+            case 'background':
+                if (params.prompt) return geminiService.generateReplacedBackground(inputFile, params.prompt);
+                if (params.backgroundDataUrl) {
+                    const backgroundFile = dataURLtoFile(params.backgroundDataUrl, 'background.png');
+                    return geminiService.generateReplacedBackgroundFromImage(inputFile, backgroundFile);
+                }
+                return null;
+            case 'clothing': {
+                const clothingFile = dataURLtoFile(params.clothingDataUrl, 'clothing.png');
+                return geminiService.generateClothingChange(inputFile, clothingFile, params.prompt);
+            }
+            case 'addPerson': {
+                const personFile = dataURLtoFile(params.personDataUrl, 'person.png');
+                return geminiService.generateAddedPerson(inputFile, personFile, params.prompt);
+            }
+            case 'addObject':
+                if (params.prompt) return geminiService.generateAddedObjectFromText(inputFile, params.prompt, params.hotspot, params.lighting, params.shadows);
+                if (params.objectDataUrl) {
+                    const objectFile = dataURLtoFile(params.objectDataUrl, 'object.png');
+                    return geminiService.generateAddedObjectFromUpload(inputFile, objectFile, params.hotspot, params.lighting, params.shadows);
+                }
+                return null;
+            case 'enhance':
+                if (params.prompt && params.hotspot) {
+                    return geminiService.generateAreaEnhancement(inputFile, params.prompt, params.hotspot);
+                }
+                return geminiService.generateEnhancedImage(inputFile, params.prompt);
+            case 'expand':
+                if (params.direction) return geminiService.generateExpandedImage(inputFile, params.direction, params.percentage);
+                return geminiService.generateUncroppedImage(inputFile, params.percentage);
+            case 'camera': return geminiService.generateNewAngleImage(inputFile, params.prompt);
+            case 'mix': {
+                const itemFiles = await Promise.all(params.itemDataUrls.map((url: string, i: number) => dataURLtoFile(url, `item-${i}.png`)));
+                return geminiService.generateMixedImage(inputFile, itemFiles, params.prompt);
+            }
+            case 'style': {
+                const referenceImages = await Promise.all(params.referenceImages.map((url: string, i: number) => dataURLtoFile(url, `style-ref-${i}.png`)));
+                return geminiService.generateStyledImage(inputFile, referenceImages);
+            }
+            default: return null;
         }
     }, []);
 
-    // Save custom styles to local storage
+    // --- Layer Processing Engine ---
     useEffect(() => {
-        try {
-            const stylesData = JSON.stringify(customStyles);
-            localStorage.setItem(STYLES_STORAGE_KEY, stylesData);
-        } catch (err) {
-            console.error("Failed to save custom styles to local storage:", err);
-        }
-    }, [customStyles]);
+        let isCancelled = false;
+        const processLayers = async () => {
+            if (!baseImage) return;
+            const generativeLayers = history.present.filter(l => l.tool !== 'image');
 
+            const firstUncachedIndex = generativeLayers.findIndex(l => l.isVisible && !l.cachedResult);
 
-    const currentImageSrc = history[historyIndex] || null;
-    const canUndo = historyIndex > 0;
-    const canRedo = historyIndex < history.length - 1;
+            if (firstUncachedIndex === -1) {
+                if (!isCancelled) setIsLoading(false);
+                return;
+            }
 
-    const updateImageState = (newSrc: string) => {
-        const newHistoryBase = history.slice(0, historyIndex + 1);
-        let newHistory = [...newHistoryBase, newSrc];
-
-        if (newHistory.length > MAX_HISTORY_LENGTH) {
-            newHistory = newHistory.slice(newHistory.length - MAX_HISTORY_LENGTH);
-        }
-
-        setHistory(newHistory);
-        setHistoryIndex(newHistory.length - 1);
-        setActiveTool(null);
-        setEditHotspot(null);
-        setMaskDataUrl(null);
-        setColorAdjustments({ hue: 0, saturation: 0, brightness: 0 });
-        setIsComparing(false);
-    };
-    
-    const handleFileSelect = useCallback((files: FileList | null) => {
-        if (files && files.length > 0) {
-            setError(null);
-            setActiveTool(null);
+            if (!isCancelled) {
+                setIsLoading(true);
+                setError(null);
+            }
             
-            if (files.length > 1) {
-                setBatchFiles(Array.from(files));
-                setIsBatchMode(true);
-                setHistory([]);
-                setHistoryIndex(-1);
-            } else {
-                setIsBatchMode(false);
-                setBatchFiles([]);
-                const file = files[0];
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const result = e.target?.result as string;
-                    setHistory([result]);
-                    setHistoryIndex(0);
-                };
-                reader.readAsDataURL(file);
+            let lastResultFile = baseImage;
+            for (let i = firstUncachedIndex - 1; i >= 0; i--) {
+                const prevLayer = generativeLayers[i];
+                if (prevLayer.isVisible && prevLayer.cachedResult) {
+                    lastResultFile = dataURLtoFile(prevLayer.cachedResult, `cached-${i}.png`);
+                    break;
+                }
             }
-        }
-    }, []);
 
-    const executeAIAction = async (action: () => Promise<string>) => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            const newImageSrc = await action();
-            updateImageState(newImageSrc);
-        } catch (err: any) {
-            console.error(err);
-            setError(err.message || 'An unknown error occurred.');
-        } finally {
-            setIsLoading(false);
-            setEditHotspot(null);
-        }
-    };
-    
-    const handleGenerateFromPrompt = useCallback(async (prompt: string) => {
-        await executeAIAction(() => generateImageFromPrompt(prompt));
-    }, []);
+            for (let i = firstUncachedIndex; i < generativeLayers.length; i++) {
+                if (isCancelled) return;
 
-    const withCurrentImageFile = (callback: (file: File) => Promise<string>) => {
-        return () => {
-            if (!currentImageSrc) throw new Error("No image to edit.");
-            const currentImageFile = dataURLtoFile(currentImageSrc, 'pixshop-current.png');
-            return callback(currentImageFile);
+                const layer = generativeLayers[i];
+                if (!layer.isVisible) continue;
+
+                if (!isCancelled) setLoadingMessage(`Применение: ${layer.name}`);
+
+                try {
+                    const inputFile = isFastMode ? await downscaleImage(lastResultFile, 1024) : lastResultFile;
+                    const resultDataUrl = await applyLayer(layer, inputFile);
+
+                    if (isCancelled) return;
+
+                    if (resultDataUrl) {
+                        dispatch({
+                            type: 'UPDATE_CACHED_RESULT',
+                            payload: { layerId: layer.id, cachedResult: resultDataUrl }
+                        });
+                        lastResultFile = dataURLtoFile(resultDataUrl, `result-${i}.png`);
+                    } else {
+                        console.warn(`Layer "${layer.name}" did not produce a result.`);
+                    }
+                } catch (err: any) {
+                    if (!isCancelled) setError(err.message);
+                    break;
+                }
+            }
+            
+            if (!isCancelled) setIsLoading(false);
         };
-    };
-
-    const handleApplyFilter = useCallback(async (prompt: string) => {
-        await executeAIAction(withCurrentImageFile(file => generateFilteredImage(file, prompt)));
-    }, [currentImageSrc]);
-
-    const handleApplyCustomStyle = useCallback(async (styleId: string) => {
-        const style = customStyles.find(s => s.id === styleId);
-        if (!style) {
-            setError("Could not find the selected custom style.");
-            return;
-        }
-        await executeAIAction(withCurrentImageFile(file => {
-            const referenceFiles = style.referenceImageUrls.map((url, i) => 
-                dataURLtoFile(url, `style-ref-${i}.png`)
-            );
-            return generateStyledImage(file, referenceFiles);
-        }));
-    }, [currentImageSrc, customStyles]);
-
-
-    const handleApplyAdjustment = useCallback(async (prompt: string) => {
-        await executeAIAction(withCurrentImageFile(file => generateAdjustedImage(file, prompt)));
-    }, [currentImageSrc]);
-
-    const handleApplyColorAdjustment = useCallback(async (prompt: string, mask: string | null) => {
-      await executeAIAction(withCurrentImageFile(file => {
-          const maskFile = mask ? dataURLtoFile(mask, 'mask.png') : undefined;
-          return generateColorAdjustedImage(file, prompt, maskFile);
-      }));
-    }, [currentImageSrc]);
-
-    const handleColorSliderChange = (newAdjustments: { hue: number; saturation: number; brightness: number; }) => {
-        setColorAdjustments(newAdjustments);
-    };
-
-    const handleApplyColorize = useCallback(async (prompt: string) => {
-        await executeAIAction(withCurrentImageFile(file => generateColorizedImage(file, prompt)));
-    }, [currentImageSrc]);
-
-    const handleApplyRetouch = useCallback(async (prompt: string, mask: string) => {
-        await executeAIAction(withCurrentImageFile(file => {
-            const maskFile = dataURLtoFile(mask, 'mask.png');
-            return generateEditedImage(file, prompt, maskFile);
-        }));
-    }, [currentImageSrc]);
     
-    const handleApplyFacialEnhancement = useCallback(async (prompt: string, mask: string) => {
-        await executeAIAction(withCurrentImageFile(file => {
-            const maskFile = dataURLtoFile(mask, 'mask.png');
-            return generateFacialEnhancement(file, prompt, maskFile);
-        }));
-    }, [currentImageSrc]);
+        processLayers();
 
-    const handleApplyBackground = useCallback(async (prompt:string) => {
-        await executeAIAction(withCurrentImageFile(file => generateReplacedBackground(file, prompt)));
-    }, [currentImageSrc]);
-    
-    const handleApplyBackgroundImage = useCallback(async (backgroundFile: File) => {
-        await executeAIAction(withCurrentImageFile(file => generateReplacedBackgroundFromImage(file, backgroundFile)));
-    }, [currentImageSrc]);
+        return () => { isCancelled = true; };
+    }, [history.present, baseImage, applyLayer, isFastMode]);
 
-    const handleApplyTransparentBackground = useCallback(async () => {
-        await executeAIAction(withCurrentImageFile(file => generateTransparentBackground(file)));
-    }, [currentImageSrc]);
-    
-    const handleApplyClothing = useCallback(async (clothingFile: File, prompt: string) => {
-        await executeAIAction(withCurrentImageFile(file => generateClothingChange(file, clothingFile, prompt)));
-    }, [currentImageSrc]);
-    
-    const handleApplyMix = useCallback(async (itemFiles: File[], prompt: string) => {
-        await executeAIAction(withCurrentImageFile(file => generateMixedImage(file, itemFiles, prompt)));
-    }, [currentImageSrc]);
-
-    const handleApplyFaceSwap = useCallback(async (faceFiles: File[]) => {
-        await executeAIAction(withCurrentImageFile(file => generateFaceSwap(file, faceFiles)));
-    }, [currentImageSrc]);
-    
-    const handleApplyAngleChange = useCallback(async (cameraMovement: string) => {
-        await executeAIAction(withCurrentImageFile(file => generateNewAngleImage(file, cameraMovement)));
-    }, [currentImageSrc]);
-
-    const handleApplyExpansion = useCallback(async (direction: 'up' | 'down' | 'left' | 'right', percentage: number) => {
-        await executeAIAction(withCurrentImageFile(file => generateExpandedImage(file, direction, percentage)));
-    }, [currentImageSrc]);
-
-    const handleApplyUncrop = useCallback(async (percentage: number) => {
-        await executeAIAction(withCurrentImageFile(file => generateUncroppedImage(file, percentage)));
-    }, [currentImageSrc]);
-
-    const handleApplyEnhancement = useCallback(async () => {
-        await executeAIAction(withCurrentImageFile(file => generateEnhancedImage(file)));
-    }, [currentImageSrc]);
-
-    const handleApplyAreaEnhancement = useCallback(async (prompt: string) => {
-        if (!editHotspot) return;
-        await executeAIAction(withCurrentImageFile(file => generateAreaEnhancement(file, prompt, editHotspot)));
-    }, [currentImageSrc, editHotspot]);
-
-    const handleApplyAddPerson = useCallback(async (personFile: File, prompt: string) => {
-        await executeAIAction(withCurrentImageFile(file => generateAddedPerson(file, personFile, prompt)));
-    }, [currentImageSrc]);
-
-    const handleApplyAddObjectFromText = useCallback(async (prompt: string) => {
-        if (!editHotspot) return;
-        await executeAIAction(withCurrentImageFile(file => generateAddedObjectFromText(file, prompt, editHotspot)));
-    }, [currentImageSrc, editHotspot]);
-    
-    const handleApplyAddObjectFromUpload = useCallback(async (objectFile: File) => {
-        if (!editHotspot) return;
-        await executeAIAction(withCurrentImageFile(file => generateAddedObjectFromUpload(file, objectFile, editHotspot)));
-    }, [currentImageSrc, editHotspot]);
-    
-    const filesToDataURLs = (files: File[]): Promise<string[]> => {
-        const promises = files.map(file => {
-          return new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-        });
-        return Promise.all(promises);
-    };
-
-    const handleTrainStyle = async (name: string, files: File[]) => {
-        setIsLoading(true);
+    // --- File & State Management ---
+    const resetState = useCallback((keepImage = false) => {
+        if (!keepImage) setImageFiles([]);
+        dispatch({ type: 'SET_HISTORY', payload: { past: [], present: [], future: [] }});
         setError(null);
-        try {
-            const referenceImageUrls = await filesToDataURLs(files);
-            const thumbnailUrl = await createStyleThumbnail(referenceImageUrls);
-            const newStyle: CustomStyle = {
-                id: `style-${Date.now()}`,
-                name,
-                referenceImageUrls,
-                thumbnailUrl,
-            };
-            setCustomStyles(prev => [...prev, newStyle]);
-            setActiveTool('filter'); // Switch to filter panel to see the new style
-        } catch (err: any) {
-            console.error("Failed to train style:", err);
-            setError("Could not process images for style training. Please try again.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
+        setActiveTool('adjust');
+        setEditHotspot(null);
+        setIsMasking(false);
+        setMaskDataUrl(null);
+        setStageState({ scale: 1, x: 0, y: 0 });
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+        setSelectedLayerId(null);
+    }, [dispatch]);
 
-    const handleDeleteStyle = (styleId: string) => {
-        if (window.confirm("Are you sure you want to delete this custom style?")) {
-            setCustomStyles(prev => prev.filter(s => s.id !== styleId));
-        }
-    };
+    // --- History Management ---
+    const handleUndo = useCallback(() => {
+        dispatch({ type: 'UNDO' });
+        // After undoing, transient states might be inconsistent with the restored layer stack.
+        // Resetting them ensures a clean state.
+        setEditHotspot(null);
+        setIsMasking(false);
+        setMaskDataUrl(null);
+        setVoiceCommandFeedback('Действие: Последнее изменение отменено.');
+    }, [dispatch]);
 
-    const handleUndo = () => {
-        if (canUndo) setHistoryIndex(historyIndex - 1);
-    };
+    const handleRedo = useCallback(() => {
+        dispatch({ type: 'REDO' });
+        // Also reset transient state on redo for consistency.
+        setEditHotspot(null);
+        setIsMasking(false);
+        setMaskDataUrl(null);
+        setVoiceCommandFeedback('Действие: Последнее изменение повторено.');
+    }, [dispatch]);
     
-    const handleRedo = () => {
-        if (canRedo) setHistoryIndex(historyIndex + 1);
-    };
-    
-    const handleDownload = () => {
-        if (!currentImageSrc) return;
+    const handleStartOver = useCallback(() => {
+      if(window.confirm("Вы уверены, что хотите начать сначала? Все несохраненные изменения будут потеряны.")) {
+          resetState();
+      }
+    }, [resetState]);
+
+    const handleDownload = useCallback(() => {
+        if (!baseImage || !canvasRef.current) return;
+        setVoiceCommandFeedback('Действие: Загрузка изображения...');
+
+        const stage = canvasRef.current;
+        const transformer = stage.findOne('Transformer');
+        const transformerVisible = transformer?.isVisible();
+
+        if (transformer) {
+            transformer.hide();
+            stage.draw();
+        }
+
+        const dataUrl = stage.toDataURL({ pixelRatio: 2 });
+
+        if (transformer && transformerVisible) {
+            transformer.show();
+            stage.draw();
+        }
+
         const link = document.createElement('a');
-        link.href = currentImageSrc;
-        link.download = `pixshop-edit-${Date.now()}.png`;
+        link.download = `pixshop-${Date.now()}.png`;
+        link.href = dataUrl;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-    };
-
-    const handleNewImage = () => {
-        setHistory([]);
-        setHistoryIndex(-1);
-        setActiveTool(null);
-        setError(null);
-        setIsBatchMode(false);
-        setBatchFiles([]);
-        setMaskDataUrl(null);
-        setEditorMode('normal');
-        setIsComparing(false);
-        localStorage.removeItem(HISTORY_STORAGE_KEY);
-    };
+    }, [baseImage]);
     
-    const handleHotspotClick = (hotspot: Hotspot) => {
-        setEditHotspot(hotspot);
-        if (activeTool !== 'enhance' && activeTool !== 'addObject') {
-            setActiveTool('enhance');
+    const handleRevertAll = useCallback(() => {
+        if (window.confirm("Вы уверены, что хотите отменить все изменения? Все слои будут удалены, и это действие нельзя отменить.")) {
+            resetState(true);
         }
-    };
+    }, [resetState]);
     
-    const handleApplyCrop = () => {
-        const image = editorCanvasRef.current?.getImage();
-        if (!completedCrop || !image || !currentImageSrc) {
-            return;
+    const handleClearCache = useCallback(() => {
+        if (window.confirm("Это приведет к повторной обработке всех видимых слоев, что может занять некоторое время. Продолжить?")) {
+            dispatch({ type: 'CLEAR_VISIBLE_CACHE' });
+            setVoiceCommandFeedback('Действие: Кэш очищен, слои обрабатываются заново.');
         }
+    }, [dispatch]);
 
-        const canvas = document.createElement('canvas');
-        const { naturalWidth, naturalHeight, width, height } = image;
-
-        const imageAspectRatio = naturalWidth / naturalHeight;
-        const containerAspectRatio = width / height;
-        
-        let renderedImgWidth: number, renderedImgHeight: number, offsetX = 0, offsetY = 0;
-
-        if (imageAspectRatio > containerAspectRatio) {
-            renderedImgWidth = width;
-            renderedImgHeight = width / imageAspectRatio;
-            offsetY = (height - renderedImgHeight) / 2;
-        } else {
-            renderedImgHeight = height;
-            renderedImgWidth = height * imageAspectRatio;
-            offsetX = (width - renderedImgWidth) / 2;
-        }
-
-        const scaleX = naturalWidth / renderedImgWidth;
-        const scaleY = naturalHeight / renderedImgHeight;
-
-        const cropX = Math.max(0, completedCrop.x - offsetX) * scaleX;
-        const cropY = Math.max(0, completedCrop.y - offsetY) * scaleY;
-
-        const cropWidth = completedCrop.width * scaleX;
-        const cropHeight = completedCrop.height * scaleY;
-        
-        if (cropWidth <= 0 || cropHeight <= 0) {
-            setError("Invalid crop dimensions. Please try again.");
-            return;
-        }
-
-        canvas.width = Math.floor(cropWidth);
-        canvas.height = Math.floor(cropHeight);
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            setError("Could not get canvas context for cropping.");
-            return;
-        }
-
-        ctx.imageSmoothingQuality = 'high';
-
-        ctx.drawImage(
-            image,
-            cropX,
-            cropY,
-            cropWidth,
-            cropHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-
-        const newImageSrc = canvas.toDataURL('image/png');
-        updateImageState(newImageSrc);
-        setCompletedCrop(null);
-        setCrop(undefined);
-        setActiveTool(null);
-    };
-
-    const handleToolSelect = (tool: Tool) => {
-        const newActiveTool = activeTool === tool ? null : tool;
-        if (newActiveTool !== 'crop') {
-            setCrop(undefined);
-            setCompletedCrop(null);
-        }
-        setEditorMode('normal');
-        setMaskDataUrl(null);
-        setActiveTool(newActiveTool);
-        setEditHotspot(null);
-        setIsComparing(false);
-    };
-
-    const handleReset = useCallback(() => {
-        if (history.length > 0) {
-            setHistoryIndex(0);
-        }
-    }, [history]);
-    
+    // --- Keyboard Shortcuts for Undo/Redo ---
     useEffect(() => {
-        if (activeTool === 'crop') {
-            const image = editorCanvasRef.current?.getImage();
-            if (image && image.naturalWidth > 0) {
-                const { naturalWidth, naturalHeight } = image;
-                const newCrop = centerCrop(
-                    makeAspectCrop(
-                        { unit: '%', width: 90 },
-                        aspect || naturalWidth / naturalHeight,
-                        naturalWidth,
-                        naturalHeight
-                    ),
-                    naturalWidth,
-                    naturalHeight
-                );
-                setCrop(newCrop);
+        const handleKeyDown = (event: KeyboardEvent) => {
+            const target = event.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+                return; // Don't interfere with text editing
+            }
+
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+            const isCtrl = isMac ? event.metaKey : event.ctrlKey;
+
+            if (isCtrl && event.key === 'z') {
+                event.preventDefault();
+                handleUndo();
+            } else if (isCtrl && event.key === 'y') {
+                event.preventDefault();
+                handleRedo();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [handleUndo, handleRedo]);
+
+    // --- Voice Command Processing ---
+    const processVoiceCommand = useCallback((command: string) => {
+        const lowerCaseCommand = command.toLowerCase();
+        let feedbackMessage: string | null = null;
+    
+        const toolMap: { [key: string]: { tool: Tool; name: string } } = {
+            'расширить': { tool: 'expand', name: 'Расширение' },
+            'камера': { tool: 'camera', name: 'Камера' },
+            'стиль': { tool: 'style', name: 'Применение стиля' },
+            'настроить': { tool: 'adjust', name: 'Настройка' },
+            'коррекция': { tool: 'adjust', name: 'Настройка' },
+            'улучшить': { tool: 'enhance', name: 'Улучшение' },
+            'ретушь': { tool: 'retouch', name: 'Ретушь' },
+            'текстовая правка': { tool: 'textEdit', name: 'Текстовая правка' },
+            'редактировать текст': { tool: 'textEdit', name: 'Текстовая правка' },
+            'ластик': { tool: 'magicEraser', name: 'Волшебный ластик' },
+            'лицо': { tool: 'facial', name: 'Лицо' },
+            'замена лица': { tool: 'faceSwap', name: 'Замена лица' },
+            'фон': { tool: 'background', name: 'Фон' },
+            'одежда': { tool: 'clothing', name: 'Одежда' },
+            'комбинировать': { tool: 'mix', name: 'Комбинирование' },
+            'добавить человека': { tool: 'addPerson', name: 'Добавление человека' },
+            'добавить объект': { tool: 'addObject', name: 'Добавление объекта' },
+            'добавить изображение': { tool: 'image', name: 'Добавление изображения' },
+        };
+    
+        let toolSwitched = false;
+        for (const keyword in toolMap) {
+            if (lowerCaseCommand.includes(keyword)) {
+                const { tool, name } = toolMap[keyword];
+                setActiveTool(tool);
+                feedbackMessage = `Понял: Переключился на инструмент '${name}'.`;
+                toolSwitched = true;
+                break;
             }
         }
-    }, [activeTool, aspect]);
-
-    const renderToolPanel = () => {
-        if (editorMode === 'masking') {
-            return (
-                <MaskingPanel 
-                    brushSize={maskBrushSize}
-                    onBrushSizeChange={setMaskBrushSize}
-                    onClearMask={() => setMaskDataUrl(null)}
-                    onCancel={() => {
-                        setEditorMode('normal');
-                        setMaskDataUrl(null);
-                    }}
-                    onDone={() => setEditorMode('normal')}
-                    isErasing={isErasing}
-                    onToggleErase={() => setIsErasing(!isErasing)}
-                />
-            );
+    
+        if (toolSwitched) {
+            // Do nothing more if we've switched a tool
+        } else if (lowerCaseCommand.includes('отменить') || lowerCaseCommand.includes('отмена')) {
+            handleUndo();
+            return; // handleUndo sets its own feedback
+        } else if (lowerCaseCommand.includes('повторить') || lowerCaseCommand.includes('возврат')) {
+            handleRedo();
+            return; // handleRedo sets its own feedback
+        } else if (lowerCaseCommand.includes('скачать') || lowerCaseCommand.includes('загрузить')) {
+            handleDownload();
+            return;
+        } else if (lowerCaseCommand.includes('начать сначала') || lowerCaseCommand.includes('новое изображение')) {
+            handleStartOver();
+            feedbackMessage = 'Действие: Начинаю сначала с новым изображением.';
+        } else if (lowerCaseCommand.includes('сбросить слои') || lowerCaseCommand.includes('удалить слои')) {
+            handleRevertAll();
+            feedbackMessage = 'Действие: Сбрасываю все слои.';
+        } else {
+            feedbackMessage = `Извините, я не распознал команду: "${command}"`;
         }
-        switch (activeTool) {
-            case 'crop':
-                return <CropPanel onApplyCrop={handleApplyCrop} onSetAspect={setAspect} isLoading={isLoading} isCropping={!!completedCrop?.width} />;
-            case 'expand':
-                return <ExpandPanel onApplyExpansion={handleApplyExpansion} onApplyUncrop={handleApplyUncrop} isLoading={isLoading} />;
-            case 'train':
-                return <TrainPanel onTrainStyle={handleTrainStyle} isLoading={isLoading} />;
-            case 'filter':
-                return <FilterPanel onApplyFilter={handleApplyFilter} isLoading={isLoading} customStyles={customStyles} onApplyCustomStyle={handleApplyCustomStyle} onDeleteCustomStyle={handleDeleteStyle} />;
-            case 'adjust':
-                return <AdjustmentPanel onApplyAdjustment={handleApplyAdjustment} isLoading={isLoading} />;
-            case 'color':
-                return <ColorPanel 
-                            onApplyColorAdjustment={handleApplyColorAdjustment} 
-                            isLoading={isLoading} 
-                            maskDataUrl={maskDataUrl}
-                            onToggleMasking={() => {
-                                setMaskDataUrl(null); // Reset mask when starting
-                                setEditorMode(editorMode === 'normal' ? 'masking' : 'normal');
-                            }}
-                            adjustments={colorAdjustments}
-                            onAdjustmentsChange={handleColorSliderChange}
-                        />;
-            case 'colorize':
-                return <ColorizePanel onApplyColorize={handleApplyColorize} isLoading={isLoading} />;
-            case 'retouch':
-                return <RetouchPanel
-                            onApplyRetouch={handleApplyRetouch}
-                            isLoading={isLoading}
-                            maskDataUrl={maskDataUrl}
-                            onToggleMasking={() => {
-                                setMaskDataUrl(null);
-                                setEditorMode('masking');
-                            }}
-                        />;
-            case 'facial':
-                return <FacialPanel
-                            onApplyFacialEnhancement={handleApplyFacialEnhancement}
-                            isLoading={isLoading}
-                            maskDataUrl={maskDataUrl}
-                            onToggleMasking={() => {
-                                setMaskDataUrl(null);
-                                setEditorMode('masking');
-                            }}
-                        />;
-            case 'removeBackground':
-                return <RemoveBackgroundPanel
-                            onApplyTransparentBackground={handleApplyTransparentBackground}
-                            isLoading={isLoading}
-                        />;
-            case 'background':
-                return <BackgroundPanel onApplyBackground={handleApplyBackground} onApplyBackgroundImage={handleApplyBackgroundImage} isLoading={isLoading} />;
-            case 'clothing':
-                return <ClothingPanel onApplyClothing={handleApplyClothing} isLoading={isLoading} />;
-            case 'mix':
-                return <MixPanel onApplyMix={handleApplyMix} isLoading={isLoading} />;
-            case 'enhance':
-                return <EnhancePanel onApplyEnhancement={handleApplyEnhancement} onApplyAreaEnhancement={handleApplyAreaEnhancement} editHotspot={editHotspot} isLoading={isLoading} />;
-            case 'faceswap':
-                return <FaceSwapPanel onApplyFaceSwap={handleApplyFaceSwap} isLoading={isLoading} />;
-            case 'camera':
-                return <AnglePanel onApplyAngleChange={handleApplyAngleChange} isLoading={isLoading} />;
-            case 'addPerson':
-                return <AddPersonPanel onApplyAddPerson={handleApplyAddPerson} isLoading={isLoading} />;
-            case 'addObject':
-                return <AddObjectPanel onApplyAddObjectFromText={handleApplyAddObjectFromText} onApplyAddObjectFromUpload={handleApplyAddObjectFromUpload} editHotspot={editHotspot} isLoading={isLoading} />;
-            default:
-                return null;
+    
+        setVoiceCommandFeedback(feedbackMessage);
+    
+    }, [handleUndo, handleRedo, handleDownload, handleStartOver, handleRevertAll, setActiveTool]);
+
+    // --- Transcription Management ---
+    const handleStopRecording = useCallback(() => {
+        if (voiceCommandDebounceRef.current) clearTimeout(voiceCommandDebounceRef.current);
+        // Process any lingering command when recording is stopped manually
+        if (currentCommandRef.current.trim()) {
+            processVoiceCommand(currentCommandRef.current.trim());
+            currentCommandRef.current = '';
+        }
+
+        setTranscriptionStatus(transcribedText ? 'done' : 'idle');
+        sessionPromiseRef.current?.then(session => session.close());
+        sessionPromiseRef.current = null;
+        scriptProcessorRef.current?.disconnect();
+        scriptProcessorRef.current = null;
+        if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
+            inputAudioContextRef.current.close();
+        }
+        inputAudioContextRef.current = null;
+        if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
+            outputAudioContextRef.current.close();
+        }
+        outputAudioContextRef.current = null;
+
+        mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
+    }, [transcribedText, processVoiceCommand]);
+
+    const handleStartRecording = useCallback(async () => {
+        setTranscriptionStatus('recording');
+        setTranscribedText('');
+        setTranscriptionError(null);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaStreamRef.current = stream;
+            const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+            const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+            inputAudioContextRef.current = inputAudioContext;
+            
+            const outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+            outputAudioContextRef.current = outputAudioContext;
+            const outputNode = outputAudioContext.createGain();
+            // Intentionally not connecting outputNode to destination to mute the audio response,
+            // but we still process it to comply with the API.
+
+            sessionPromiseRef.current = ai.live.connect({
+                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+                callbacks: {
+                    onopen: () => {
+                        console.debug('Live session opened.');
+                        const source = inputAudioContext.createMediaStreamSource(stream);
+                        const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
+                        scriptProcessorRef.current = scriptProcessor;
+                        scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+                            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                            const pcmBlob = createGeminiBlob(inputData);
+                            sessionPromiseRef.current?.then((session) => {
+                                session.sendRealtimeInput({ media: pcmBlob });
+                            });
+                        };
+                        source.connect(scriptProcessor);
+                        scriptProcessor.connect(inputAudioContext.destination);
+                    },
+                    onmessage: async (message) => {
+                        // Handle the model's audio output to comply with API requirements, even if not played.
+                        const base64EncodedAudioString = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+
+                        if (base64EncodedAudioString && outputAudioContextRef.current) {
+                            const outCtx = outputAudioContextRef.current;
+                            nextStartTimeRef.current = Math.max(
+                                nextStartTimeRef.current,
+                                outCtx.currentTime
+                            );
+                            const audioBuffer = await decodeAudioData(
+                                decode(base64EncodedAudioString),
+                                outCtx,
+                                24000,
+                                1
+                            );
+                            const source = outCtx.createBufferSource();
+                            source.buffer = audioBuffer;
+                            source.connect(outputNode);
+                            source.addEventListener('ended', () => {
+                                sourcesRef.current.delete(source);
+                            });
+                            source.start(nextStartTimeRef.current);
+                            nextStartTimeRef.current += audioBuffer.duration;
+                            sourcesRef.current.add(source);
+                        }
+
+                        // Handle transcription with debounce for command processing
+                        if (message.serverContent?.inputTranscription) {
+                            if (voiceCommandDebounceRef.current) clearTimeout(voiceCommandDebounceRef.current);
+                            
+                            const text = message.serverContent.inputTranscription.text;
+                            currentCommandRef.current += text;
+                            setTranscribedText(prev => prev + text);
+
+                            voiceCommandDebounceRef.current = window.setTimeout(() => {
+                                if (currentCommandRef.current.trim()) {
+                                    processVoiceCommand(currentCommandRef.current.trim());
+                                    setTranscribedText(prev => prev + '\n');
+                                    currentCommandRef.current = '';
+                                }
+                            }, 1200); // 1.2 second delay after user stops speaking
+                        }
+
+                        if (message.serverContent?.turnComplete) {
+                            if (voiceCommandDebounceRef.current) clearTimeout(voiceCommandDebounceRef.current);
+                            if (currentCommandRef.current.trim()) {
+                                processVoiceCommand(currentCommandRef.current.trim());
+                            }
+                            setTranscribedText(prev => prev + '\n');
+                            currentCommandRef.current = '';
+                        }
+                    },
+                    onerror: (e) => {
+                        console.error('Live session error:', e);
+                        setTranscriptionError('An error occurred during transcription. Please try again.');
+                        setTranscriptionStatus('error');
+                        handleStopRecording();
+                    },
+                    onclose: () => { console.debug('Live session closed.'); },
+                },
+                config: {
+                    responseModalities: [Modality.AUDIO],
+                    inputAudioTranscription: {},
+                },
+            });
+            await sessionPromiseRef.current;
+        } catch (err) {
+            console.error('Failed to start recording:', err);
+            let errorMessage = 'Could not access microphone. Please check permissions.';
+            if (err instanceof DOMException) {
+                switch (err.name) {
+                    case 'NotAllowedError':
+                        errorMessage = 'Microphone permission denied. Please enable it in your browser settings to use this feature.';
+                        break;
+                    case 'NotFoundError':
+                        errorMessage = 'No microphone found. Please ensure a microphone is connected and enabled.';
+                        break;
+                    case 'NotReadableError':
+                        errorMessage = 'Microphone is busy or unreadable. Please check if another app is using it.';
+                        break;
+                    default:
+                        errorMessage = `Could not access microphone: ${err.message}. Check your browser and system settings.`;
+                }
+            } else if (err instanceof Error) {
+                errorMessage = `An unexpected error occurred while accessing the microphone: ${err.message}`;
+            }
+            setTranscriptionError(errorMessage);
+            setTranscriptionStatus('error');
+        }
+    }, [handleStopRecording, processVoiceCommand]);
+    
+    const handleToggleMasking = useCallback(() => {
+        setIsMasking(prev => !prev);
+    }, []);
+
+    const handleConfirmMasking = useCallback(() => {
+        setIsMasking(false);
+    }, []);
+    
+    const handleCancelMasking = useCallback(() => {
+        setIsMasking(false);
+        setMaskDataUrl(null);
+    }, []);
+
+    const handleClearObjects = useCallback(() => {
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+        setMaskDataUrl(null);
+    }, []);
+
+    const handleToolSelect = useCallback((tool: Tool) => {
+        // Deactivate all interactive modes when switching tools to prevent
+        // state from one tool interfering with another.
+        setIsMasking(false);
+        setMaskDataUrl(null);
+        setEditHotspot(null);
+        setSelectedLayerId(null);
+    
+        // Clear data related to object selection unless switching to the magic eraser tool.
+        if (tool !== 'magicEraser') {
+            handleClearObjects();
+        }
+    
+        // Activate the new tool and its specific mode.
+        setActiveTool(tool);
+    }, [handleClearObjects]);
+    
+    const handleFileSelect = (files: FileList | null) => {
+        if (files && files.length > 0) {
+            const fileArray = Array.from(files);
+            resetState(false);
+            setImageFiles(fileArray);
         }
     };
+    
+    // --- Layer Application Logic ---
+    const handleAddLayer = useCallback((newLayer: Omit<Layer, 'id' | 'isVisible' | 'cachedResult'>) => {
+        dispatch({ type: 'ADD', payload: newLayer });
+        setMaskDataUrl(null);
+        setIsMasking(false);
+        setEditHotspot(null);
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+    }, [dispatch]);
+    
+    const handleUpdateLayerTransform = useCallback((layerId: string, newTransform: Layer['transform']) => {
+        dispatch({ type: 'UPDATE_LAYER_TRANSFORM', payload: { layerId, transform: newTransform } });
+    }, [dispatch]);
 
-    const renderContent = () => {
-        if (isBatchMode) {
-            return <BatchEditor files={batchFiles} onExit={handleNewImage} />;
+    const handleReorderLayers = useCallback((newOrder: Layer[]) => dispatch({ type: 'REORDER', payload: { newOrder } }), [dispatch]);
+    const handleToggleVisibility = useCallback((layerId: string) => dispatch({ type: 'TOGGLE_VISIBILITY', payload: { layerId } }), [dispatch]);
+    const handleRemoveLayer = useCallback((layerId: string) => dispatch({ type: 'REMOVE', payload: { layerId } }), [dispatch]);
+
+    const handleGenerateFromPrompt = async (prompt: string) => {
+        if (!prompt) return;
+        setIsLoading(true);
+        setLoadingMessage('Generating your image...');
+        setError(null);
+        try {
+            const imageDataUrl = await geminiService.generateImageFromPrompt(prompt);
+            const file = dataURLtoFile(imageDataUrl, `${prompt.slice(0, 20)}.png`);
+            resetState(false);
+            setImageFiles([file]);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
         }
-
-        if (!currentImageSrc) {
-            return <StartScreen onFileSelect={handleFileSelect} onGenerateFromPrompt={handleGenerateFromPrompt} isLoading={isLoading} />;
+    };
+    
+    const handleFindObjects = useCallback(async () => {
+        if (!baseImage || isFindingObjects) return;
+        setIsFindingObjects(true);
+        setError(null);
+        setDetectedObjects(null);
+        try {
+            const objects = await geminiService.detectAndSegmentObjects(baseImage);
+            setDetectedObjects(objects);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsFindingObjects(false);
         }
+    }, [baseImage, isFindingObjects]);
 
+    const handleObjectMaskToggle = useCallback((maskUrl: string) => {
+        setSelectedObjectMasks(prev => prev.includes(maskUrl) ? prev.filter(m => m !== maskUrl) : [...prev, maskUrl]);
+    }, []);
+
+    const handleConfirmSelection = useCallback(() => setDetectedObjects(null), []);
+    
+    const handleSaveProject = useCallback(async () => {
+        if (!baseImage) {
+            alert("Пожалуйста, загрузите изображение перед сохранением.");
+            return;
+        }
+        setLoadingMessage('Saving project...');
+        setIsLoading(true);
+        try {
+            const baseImageAsDataUrl = await fileToDataURL(baseImage);
+            const projectState: ProjectState = {
+                baseImage: baseImageAsDataUrl, history
+            };
+            const jsonString = JSON.stringify(projectState, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `pixshop-project-${Date.now()}.pixshop`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        } catch (err: any) {
+            setError('Failed to save project: ' + err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [baseImage, history]);
+    
+    const handleLoadProject = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Reset everything before loading
+        resetState();
+        setIsLoading(true);
+        setLoadingMessage('Loading project...');
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                if (!e.target?.result) throw new Error("Could not read project file");
+                const projectState: ProjectState = JSON.parse(e.target.result as string);
+
+                if (!projectState.baseImage) {
+                    throw new Error("Project file is missing the base image.");
+                }
+
+                const imageFile = dataURLtoFile(projectState.baseImage, 'project-base-image.png');
+                setImageFiles([imageFile]);
+
+                // Backward compatibility for old project files
+                if (projectState.layers && !projectState.history) {
+                    const loadedHistory: HistoryState = {
+                        past: [],
+                        present: projectState.layers,
+                        future: projectState.undoneLayers ? [projectState.undoneLayers] : [],
+                    };
+                    dispatch({ type: 'SET_HISTORY', payload: loadedHistory });
+                } else if (projectState.history) {
+                    const validHistory = {
+                        ...projectState.history,
+                        past: projectState.history.past || [],
+                        present: projectState.history.present || [],
+                        future: projectState.history.future || []
+                    };
+                    dispatch({ type: 'SET_HISTORY', payload: validHistory });
+                }
+
+            } catch (err: any) {
+                setError('Failed to load project: ' + err.message);
+                resetState(); // Clear out partial state on error
+            } finally {
+                setIsLoading(false);
+                // Clear the input value to allow loading the same file again
+                if(event.target) event.target.value = '';
+            }
+        };
+        reader.onerror = () => {
+            setError('Failed to read the project file.');
+            setIsLoading(false);
+        };
+        reader.readAsText(file);
+    }, [resetState]);
+    
+    const handleInspectElement = useCallback(async (point: Hotspot) => {
+        if (!baseImage || isInspecting) return;
+        setIsInspecting(true);
+        setInspectionResult(null);
+        setError(null);
+        try {
+            const result = await geminiService.getCssForElement(baseImage, point);
+            setInspectionResult({ ...result, error: null });
+        } catch (err: any) {
+            setInspectionResult({ name: '', mask: null, css: null, error: err.message });
+        } finally {
+            setIsInspecting(false);
+        }
+    }, [baseImage, isInspecting]);
+
+    const handleClearInspection = useCallback(() => {
+        setInspectionResult(null);
+    }, []);
+
+    const selectedLayer = useMemo(() => {
+        if (!selectedLayerId) return null;
+        return history.present.find(l => l.id === selectedLayerId) || null;
+    }, [selectedLayerId, history.present]);
+
+    if (isLoading && !baseImage) { // Only show full-screen spinner if there's no image
         return (
-            <div className="w-full h-full flex flex-row items-start gap-4 animate-fade-in">
-                <aside className={`w-96 flex-shrink-0 h-full overflow-y-auto transition-all duration-500 ease-out transform ${activeTool || editorMode === 'masking' ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
-                    {renderToolPanel()}
-                </aside>
-                <div className="flex-grow h-full flex flex-col items-center justify-center">
-                    <EditorCanvas
-                        ref={editorCanvasRef}
-                        key={currentImageSrc} 
-                        imageSrc={currentImageSrc}
-                        originalImageSrc={history[0]}
-                        onHotspotClick={handleHotspotClick}
-                        editHotspot={editHotspot}
-                        activeTool={activeTool}
-                        crop={crop}
-                        onCropChange={setCrop}
-                        onCropComplete={setCompletedCrop}
-                        aspect={aspect}
-                        editorMode={editorMode}
-                        maskDataUrl={maskDataUrl}
-                        onMaskChange={setMaskDataUrl}
-                        brushSize={maskBrushSize}
-                        isErasing={isErasing}
-                        colorAdjustments={colorAdjustments}
-                        isComparing={isComparing}
-                        onCompareChange={setIsComparing}
-                        canUndo={canUndo}
-                    />
-                </div>
-                <Toolbar 
-                    activeTool={activeTool}
-                    onToolSelect={handleToolSelect}
-                    onUndo={handleUndo}
-                    canUndo={canUndo}
-                    onRedo={handleRedo}
-                    canRedo={canRedo}
-                    onDownload={handleDownload}
-                    onReset={handleReset}
-                    onNewImage={handleNewImage}
-                />
+            <div className="w-screen h-screen flex flex-col items-center justify-center bg-bg-main text-center p-8">
+                <Spinner />
+                <p className="mt-4 text-xl font-bold text-text-primary animate-pulse">{loadingMessage}</p>
             </div>
         );
     }
+
+    if (!baseImage) {
+        return <StartScreen onFileSelect={handleFileSelect} onGenerateFromPrompt={handleGenerateFromPrompt} isLoading={isLoading} />;
+    }
     
     return (
-        <div className="bg-gray-900 text-white h-screen flex flex-col font-sans overflow-hidden">
-            <Header />
-            <main className="flex-grow flex flex-col items-center justify-center p-4 relative overflow-hidden">
-                {isLoading && !isBatchMode && (
-                    <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-50 backdrop-blur-sm">
-                        <Spinner />
-                        <p className="mt-4 text-lg text-gray-300 animate-pulse">AI is thinking...</p>
-                    </div>
-                )}
+        <div className="w-screen h-screen flex flex-col bg-bg-main font-sans">
+            <Header
+                onSaveProject={handleSaveProject}
+                onLoadProject={handleLoadProject}
+                isFastMode={isFastMode}
+                onFastModeChange={setIsFastMode}
+                onDownload={handleDownload}
+            />
 
-                {error && (
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500/90 text-white p-4 rounded-lg shadow-lg z-40 max-w-xl text-center backdrop-blur-sm">
-                        <p className="font-bold">An error occurred:</p>
-                        <p>{error}</p>
-                        <Tooltip text="Dismiss error message">
-                            <button onClick={() => setError(null)} className="mt-2 text-sm font-semibold underline">Dismiss</button>
-                        </Tooltip>
-                    </div>
-                )}
+            <main className="flex-grow flex overflow-hidden">
+                <ToolsPalette activeTool={activeTool} onToolSelect={handleToolSelect} />
                 
-                {renderContent()}
+                <div className="flex-grow flex flex-col items-center justify-center p-4 relative overflow-hidden">
+                    <EditorCanvas
+                        ref={canvasRef}
+                        baseImage={baseImage}
+                        layers={history.present}
+                        isMasking={isMasking}
+                        maskDataUrl={maskDataUrl}
+                        onMaskChange={setMaskDataUrl}
+                        onHotspot={setEditHotspot}
+                        editHotspot={editHotspot}
+                        activeTool={activeTool}
+                        stageState={stageState}
+                        onStageStateChange={setStageState}
+                        brushSize={brushSize}
+                        brushShape={brushShape}
+                        brushHardness={brushHardness}
+                        maskPreviewOpacity={maskPreviewOpacity}
+                        detectedObjects={detectedObjects}
+                        selectedObjectMasks={selectedObjectMasks}
+// FIX: Pass the 'handleObjectMaskToggle' function to the 'onObjectMaskToggle' prop.
+                        onObjectMaskToggle={handleObjectMaskToggle}
+                        selectedLayerId={selectedLayerId}
+                        onSelectLayer={setSelectedLayerId}
+                        onUpdateLayerTransform={handleUpdateLayerTransform}
+                        onInspectElement={handleInspectElement}
+                        inspectedElementMask={inspectionResult?.mask ?? null}
+                    />
+                </div>
 
+                <RightSidebar
+                    // State
+                    activeTool={activeTool}
+                    isLoading={isLoading}
+                    loadingMessage={isLoading ? loadingMessage : ''}
+                    isFindingObjects={isFindingObjects}
+                    layers={history.present}
+                    maskDataUrl={maskDataUrl}
+                    editHotspot={editHotspot}
+                    detectedObjects={detectedObjects}
+                    selectedObjectMasks={selectedObjectMasks}
+                    hasUndo={history.past.length > 0}
+                    hasRedo={history.future.length > 0}
+                    isRecording={transcriptionStatus === 'recording'}
+                    transcriptionStatus={transcriptionStatus}
+                    transcribedText={transcribedText}
+                    transcriptionError={transcriptionError}
+                    isMasking={isMasking}
+                    brushSize={brushSize}
+                    brushShape={brushShape}
+                    brushHardness={brushHardness}
+                    maskPreviewOpacity={maskPreviewOpacity}
+                    selectedLayer={selectedLayer}
+                    isInspecting={isInspecting}
+                    inspectionResult={inspectionResult}
+                    // Handlers
+                    onAddLayer={handleAddLayer}
+                    onToggleMasking={handleToggleMasking}
+                    onFindObjects={handleFindObjects}
+// FIX: Pass the 'handleObjectMaskToggle' function to the 'onObjectMaskToggle' prop.
+                    onObjectMaskToggle={handleObjectMaskToggle}
+                    onSetMaskDataUrl={setMaskDataUrl}
+                    onClearObjects={handleClearObjects}
+                    onConfirmSelection={handleConfirmSelection}
+                    onReorderLayers={handleReorderLayers}
+                    onToggleVisibility={handleToggleVisibility}
+                    onRemoveLayer={handleRemoveLayer}
+                    onNewImage={handleStartOver}
+                    onDownload={handleDownload}
+                    onRevertAll={handleRevertAll}
+                    onClearCache={handleClearCache}
+                    onUndo={handleUndo}
+                    onRedo={handleRedo}
+                    onStartRecording={handleStartRecording}
+                    onStopRecording={handleStopRecording}
+                    onBrushSizeChange={setBrushSize}
+                    onBrushShapeChange={setBrushShape}
+                    onBrushHardnessChange={setBrushHardness}
+                    onOpacityChange={setMaskPreviewOpacity}
+                    onConfirmMasking={handleConfirmMasking}
+                    onCancelMasking={handleCancelMasking}
+                    onUpdateLayerTransform={handleUpdateLayerTransform}
+                    onClearInspection={handleClearInspection}
+                />
             </main>
+             {isLoading && baseImage && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 bg-bg-panel border-2 border-primary text-text-primary px-4 py-3 rounded-lg shadow-lg flex items-center gap-4 max-w-md animate-fade-in">
+                    <Spinner size="sm" className="text-primary" />
+                    <span className="block sm:inline flex-grow font-semibold">{loadingMessage}</span>
+                </div>
+            )}
+            {voiceCommandFeedback && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 bg-bg-panel border-2 border-primary text-text-primary px-4 py-3 rounded-lg shadow-lg flex items-center gap-4 max-w-md animate-fade-in">
+                    <span className="block sm:inline flex-grow">{voiceCommandFeedback}</span>
+                    <button onClick={() => setVoiceCommandFeedback(null)} className="p-1 rounded-full hover:bg-blue-100 transition-colors">
+                        <XCircleIcon className="w-5 h-5 text-primary" />
+                    </button>
+                </div>
+            )}
+            {error && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 bg-bg-panel border-2 border-red-500 text-text-primary px-4 py-3 rounded-lg shadow-lg flex items-center gap-4 max-w-2xl">
+                    <strong className="font-bold text-red-600">Ошибка:</strong>
+                    <span className="block sm:inline flex-grow">{error}</span>
+                    <button onClick={() => setError(null)} className="p-1 rounded-full hover:bg-red-100 transition-colors">
+                        <XCircleIcon className="w-5 h-5 text-red-600" />
+                    </button>
+                </div>
+            )}
+            {imageFiles.length > 1 && (
+                <BatchEditor files={imageFiles} onExit={handleStartOver} />
+            )}
         </div>
     );
 };

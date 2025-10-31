@@ -6,13 +6,15 @@
 import React, { useState } from 'react';
 import { UploadIcon } from './icons';
 import Tooltip from './Tooltip';
+import { Layer } from '../types';
+import Spinner from './Spinner';
 
 interface ClothingPanelProps {
-  onApplyClothing: (clothingFile: File, prompt: string) => void;
+  onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
   isLoading: boolean;
 }
 
-const ClothingPanel: React.FC<ClothingPanelProps> = ({ onApplyClothing, isLoading }) => {
+const ClothingPanel: React.FC<ClothingPanelProps> = ({ onAddLayer, isLoading }) => {
   const [clothingFile, setClothingFile] = useState<File | null>(null);
   const [clothingPreview, setClothingPreview] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -32,20 +34,24 @@ const ClothingPanel: React.FC<ClothingPanelProps> = ({ onApplyClothing, isLoadin
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (clothingFile && prompt.trim()) {
-      onApplyClothing(clothingFile, prompt);
+      onAddLayer({
+        name: `Clothing: ${prompt.slice(0, 20)}...`,
+        tool: 'clothing',
+        params: { clothingDataUrl: clothingPreview, prompt }
+      });
     }
   };
 
   return (
-    <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
-      <h3 className="text-lg font-semibold text-center text-gray-300">Change Clothing</h3>
-      <p className="text-sm text-center text-gray-400 -mt-2">Upload a reference image of an item of clothing.</p>
+    <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col gap-4 animate-fade-in">
+      <h3 className="text-xl font-bold text-center text-text-primary">Изменить одежду</h3>
+      <p className="text-sm text-center text-text-secondary -mt-2">Загрузите эталонное изображение предмета одежды.</p>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <Tooltip text="Upload an image of a clothing item (e.g., a shirt on a white background)">
+        <Tooltip side="left" text="Загрузите изображение предмета одежды (например, рубашку на белом фоне)">
           <label
             htmlFor="clothing-upload"
-            className={`w-full p-6 border-2 border-dashed border-gray-600 rounded-lg text-center cursor-pointer hover:border-blue-500 hover:bg-blue-500/10 transition-colors ${isDraggingOver ? 'border-blue-400 bg-blue-500/10' : ''}`}
+            className={`w-full p-6 border-2 border-dashed rounded-lg text-center cursor-pointer hover:border-primary hover:bg-primary/10 transition-colors ${isDraggingOver ? 'border-primary bg-primary/10 animate-pulse' : 'border-border-color'}`}
             onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
             onDragLeave={() => setIsDraggingOver(false)}
             onDrop={(e) => {
@@ -57,33 +63,33 @@ const ClothingPanel: React.FC<ClothingPanelProps> = ({ onApplyClothing, isLoadin
             {clothingPreview ? (
               <img src={clothingPreview} alt="Clothing preview" className="max-h-32 mx-auto rounded-md object-contain" />
             ) : (
-              <div className="flex flex-col items-center gap-2 text-gray-400">
+              <div className="flex flex-col items-center gap-2 text-text-secondary">
                 <UploadIcon className="w-8 h-8" />
-                <span>Click to upload or drag & drop</span>
+                <span>Нажмите для загрузки или перетащите</span>
               </div>
             )}
           </label>
         </Tooltip>
         <input id="clothing-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e.target.files?.[0] || null)} disabled={isLoading} />
 
-        <Tooltip text="Provide instructions for the AI, e.g., 'Replace my t-shirt with this one'">
+        <Tooltip side="left" text="Предоставьте инструкции для ИИ, например, 'Заменить мою футболку на эту'">
           <input
             type="text"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="e.g., 'Change my shirt to this one'"
-            className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base"
+            placeholder="например, 'Поменять мою рубашку на эту'"
+            className="flex-grow bg-stone-50 border-2 border-border-color text-text-primary rounded-lg p-3 focus:ring-2 ring-primary focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base"
             disabled={isLoading}
           />
         </Tooltip>
 
-        <Tooltip text="Apply the clothing change using the uploaded image and prompt">
+        <Tooltip side="left" text="Применить смену одежды, используя загруженное изображение и подсказку">
           <button
             type="submit"
-            className="w-full bg-gradient-to-br from-blue-600 to-blue-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-blue-800 disabled:to-blue-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
+            className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center h-[52px]"
             disabled={isLoading || !clothingFile || !prompt.trim()}
           >
-            Apply Clothing
+            {isLoading ? <Spinner size="sm" /> : 'Добавить слой'}
           </button>
         </Tooltip>
       </form>

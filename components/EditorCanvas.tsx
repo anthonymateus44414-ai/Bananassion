@@ -2,611 +2,628 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { Stage, Layer as KonvaLayer, Image as KonvaImage, Rect, Transformer, Line, Circle } from 'react-konva';
+import useImage from 'use-image';
+import { Layer, Hotspot, Tool, BrushShape, DetectedObject } from '../types';
+import Konva from 'konva';
+import { KonvaEventObject } from 'konva/lib/Node';
+import ZoomControls from './ZoomControls.tsx';
 
-import React, { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
-import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
-import { Hotspot, Tool, EditorMode } from '../types';
-import { MagnifyingGlassPlusIcon, MagnifyingGlassMinusIcon, ArrowsPointingOutIcon, EyeIcon } from './icons';
-import Tooltip from './Tooltip';
 
 interface EditorCanvasProps {
-  imageSrc: string | null;
-  originalImageSrc: string | null;
-  onHotspotClick: (hotspot: Hotspot) => void;
-  editHotspot: Hotspot | null;
-  activeTool: Tool;
-  crop: Crop | undefined;
-  onCropChange: (crop: Crop) => void;
-  onCropComplete: (crop: PixelCrop) => void;
-  aspect: number | undefined;
-  editorMode: EditorMode;
-  maskDataUrl: string | null;
-  onMaskChange: (dataUrl: string | null) => void;
-  brushSize: number;
-  isErasing: boolean;
-  colorAdjustments: { hue: number; saturation: number; brightness: number; };
-  isComparing: boolean;
-  onCompareChange: (isComparing: boolean) => void;
-  canUndo: boolean;
+    baseImage: File;
+    layers: Layer[];
+    isMasking: boolean;
+    maskDataUrl: string | null;
+    onMaskChange: (dataUrl: string | null) => void;
+    onHotspot: (hotspot: Hotspot | null) => void;
+    editHotspot: Hotspot | null;
+    activeTool: Tool;
+    stageState: { scale: number; x: number; y: number };
+    onStageStateChange: (newState: { scale: number; x: number; y: number }) => void;
+    brushSize: number;
+    brushShape: BrushShape;
+    brushHardness: number;
+    maskPreviewOpacity: number;
+    detectedObjects: DetectedObject[] | null;
+    selectedObjectMasks: string[];
+    onObjectMaskToggle: (maskUrl: string) => void;
+    selectedLayerId: string | null;
+    onSelectLayer: (layerId: string | null) => void;
+    onUpdateLayerTransform: (layerId: string, newTransform: Layer['transform']) => void;
+    onInspectElement: (point: { x: number; y: number }) => void;
+    inspectedElementMask: string | null;
 }
 
-export interface EditorCanvasHandles {
-  getImage: () => HTMLImageElement | null;
-}
+const TransformableImage: React.FC<{
+    layer: Layer;
+    isSelected: boolean;
+    onSelect: () => void;
+    onTransform: (newAttrs: any) => void;
+    onDragEnd: (newAttrs: any) => void;
+}> = ({ layer, isSelected, onSelect, onTransform, onDragEnd }) => {
+    const shapeRef = useRef<Konva.Image>(null);
+    const trRef = useRef<Konva.Transformer>(null);
+    const [image] = useImage(layer.params.imageDataUrl);
 
-const MIN_SCALE = 0.1;
-const MAX_SCALE = 10;
-
-const EditorCanvas = forwardRef<EditorCanvasHandles, EditorCanvasProps>(({ 
-  imageSrc, 
-  originalImageSrc,
-  onHotspotClick, 
-  editHotspot, 
-  activeTool,
-  crop,
-  onCropChange,
-  onCropComplete,
-  aspect,
-  editorMode,
-  maskDataUrl,
-  onMaskChange,
-  brushSize,
-  isErasing,
-  colorAdjustments,
-  isComparing,
-  onCompareChange,
-  canUndo,
-}, ref) => {
-  const imgRef = useRef<HTMLImageElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const maskCanvasRef = useRef<HTMLCanvasElement>(null);
-  const drawingContext = useRef<{ lastX: number, lastY: number } | null>(null);
-  
-  const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [isSpacePressed, setIsSpacePressed] = useState(false);
-  const panStart = useRef({ x: 0, y: 0 });
-  const ignoreClick = useRef(false);
-
-  // Compare mode slider state
-  const [sliderPosition, setSliderPosition] = useState(50); // percentage
-  const [isDraggingSlider, setIsDraggingSlider] = useState(false);
-
-  const [cursorPos, setCursorPos] = useState({ x: -100, y: -100 }); // Start off-screen
-  const [isCursorVisible, setIsCursorVisible] = useState(false);
-
-  const [imageGeom, setImageGeom] = useState({
-      naturalWidth: 0,
-      naturalHeight: 0,
-      renderedWidth: 0,
-      renderedHeight: 0,
-      offsetX: 0,
-      offsetY: 0,
-  });
-
-  useImperativeHandle(ref, () => ({
-    getImage: () => imgRef.current
-  }));
-
-  const fitToView = useCallback(() => {
-    setTransform({ scale: 1, x: 0, y: 0 });
-  }, []);
-
-  useEffect(() => {
-    // Reset view when entering crop mode, masking, or comparison for a predictable experience
-    if (activeTool === 'crop' || editorMode === 'masking' || isComparing) {
-        fitToView();
-    }
-  }, [activeTool, editorMode, isComparing, fitToView]);
-
-  useEffect(() => {
-    fitToView();
-    setImageGeom({ naturalWidth: 0, naturalHeight: 0, renderedWidth: 0, renderedHeight: 0, offsetX: 0, offsetY: 0 }); 
-  }, [imageSrc, fitToView]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-        const activeEl = document.activeElement;
-        const isTyping = activeEl && (activeEl.tagName.toLowerCase() === 'input' || activeEl.tagName.toLowerCase() === 'textarea');
-        if (isTyping || isComparing) return;
-
-        if (e.code === 'Space' && !e.repeat) {
-            e.preventDefault();
-            setIsSpacePressed(true);
+    useEffect(() => {
+        if (isSelected && trRef.current && shapeRef.current) {
+            trRef.current.nodes([shapeRef.current]);
+            trRef.current.getLayer()?.batchDraw();
         }
+    }, [isSelected]);
+    
+    if (!layer.transform) return null;
 
-        // Zoom and Pan shortcuts
-        if ((e.ctrlKey || e.metaKey)) {
-            let handled = false;
-            switch(e.key) {
-                case '=':
-                case '+':
-                    adjustZoom(0.2);
-                    handled = true;
-                    break;
-                case '-':
-                    adjustZoom(-0.2);
-                    handled = true;
-                    break;
-                case '0':
-                    fitToView();
-                    handled = true;
-                    break;
+    return (
+        <React.Fragment>
+            <KonvaImage
+                ref={shapeRef}
+                image={image}
+                onClick={onSelect}
+                onTap={onSelect}
+                draggable
+                x={layer.transform.x}
+                y={layer.transform.y}
+                width={layer.transform.width}
+                height={layer.transform.height}
+                rotation={layer.transform.rotation}
+                onDragEnd={(e) => {
+                    onDragEnd({
+                        x: e.target.x(),
+                        y: e.target.y(),
+                    });
+                }}
+                onTransformEnd={() => {
+                    const node = shapeRef.current;
+                    if (node) {
+                        const scaleX = node.scaleX();
+                        const scaleY = node.scaleY();
+                        node.scaleX(1);
+                        node.scaleY(1);
+                        onTransform({
+                            x: node.x(),
+                            y: node.y(),
+                            width: Math.max(5, node.width() * scaleX),
+                            height: Math.max(5, node.height() * scaleY),
+                            rotation: node.rotation(),
+                        });
+                    }
+                }}
+            />
+            {isSelected && (
+                <Transformer
+                    ref={trRef}
+                    anchorStroke="#3B82F6"
+                    anchorFill="white"
+                    anchorSize={10}
+                    borderStroke="#3B82F6"
+                    borderStrokeWidth={2}
+                    boundBoxFunc={(oldBox, newBox) => {
+                        // limit resize
+                        if (newBox.width < 5 || newBox.height < 5) {
+                            return oldBox;
+                        }
+                        return newBox;
+                    }}
+                />
+            )}
+        </React.Fragment>
+    );
+};
+
+const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
+    baseImage,
+    layers,
+    isMasking,
+    maskDataUrl,
+    onMaskChange,
+    onHotspot,
+    editHotspot,
+    activeTool,
+    stageState,
+    onStageStateChange,
+    brushSize,
+    brushShape,
+    brushHardness,
+    maskPreviewOpacity,
+    detectedObjects,
+    selectedObjectMasks,
+    onObjectMaskToggle,
+    selectedLayerId,
+    onSelectLayer,
+    onUpdateLayerTransform,
+    onInspectElement,
+    inspectedElementMask,
+}, stageRef) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+    
+    const baseImageUrl = useMemo(() => URL.createObjectURL(baseImage), [baseImage]);
+    
+    // This is the new rendering logic.
+    // It finds the last generative layer's output as the base,
+    // and then collects all subsequent image layers to be rendered on top.
+    const { finalGenerativeSrc, imageLayers } = useMemo(() => {
+        const generativeLayers = layers.filter(l => l.tool !== 'image');
+        const lastVisibleGenerativeLayer = generativeLayers
+            .filter(l => l.isVisible && l.cachedResult)
+            .slice(-1)[0];
+
+        const src = lastVisibleGenerativeLayer?.cachedResult || baseImageUrl;
+        
+        // Image layers are composited on top of the final generative result.
+        const imgLayers = layers.filter(l => l.tool === 'image' && l.isVisible);
+        
+        return { finalGenerativeSrc: src, imageLayers: imgLayers };
+    }, [layers, baseImageUrl]);
+    
+    
+    const [displayedImg, , ] = useImage(finalGenerativeSrc);
+    const [displayedImageSize, setDisplayedImageSize] = useState({ width: 0, height: 0 });
+
+    const maskLayerRef = useRef<Konva.Layer>(null);
+    const isDrawing = useRef(false);
+    const currentLine = useRef<Konva.Line | null>(null);
+
+    
+    const [objectImages, setObjectImages] = useState<{ [key: string]: HTMLImageElement }>({});
+    
+    const [initialMaskImage, setInitialMaskImage] = useState<HTMLImageElement | null>(null);
+    const [maskImgFromUrl] = useImage(maskDataUrl || '');
+    const [inspectedMaskImage] = useImage(inspectedElementMask || '');
+
+    const hotspotRef = useRef<Konva.Circle>(null);
+    
+    const imageRef = useRef<Konva.Image>(null);
+    
+    // Update displayed image size when the source changes (e.g., after a crop)
+    useEffect(() => {
+        if (displayedImg) {
+            setDisplayedImageSize({ width: displayedImg.width, height: displayedImg.height });
+        }
+    }, [displayedImg]);
+
+    // Preload object mask images
+    useEffect(() => {
+        if (detectedObjects) {
+            const newObjectImages: { [key: string]: HTMLImageElement } = {};
+            let loadedCount = 0;
+            if (detectedObjects.length === 0) {
+                 setObjectImages({});
+                 return;
             }
-            if (handled) {
-                e.preventDefault();
-            }
-        }
-    };
-    const handleKeyUp = (e: KeyboardEvent) => {
-        const activeEl = document.activeElement;
-        const isTyping = activeEl && (activeEl.tagName.toLowerCase() === 'input' || activeEl.tagName.toLowerCase() === 'textarea');
-        if (isTyping || isComparing) return;
-
-        if (e.code === 'Space') {
-            e.preventDefault();
-            setIsSpacePressed(false);
-        }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-        window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [fitToView, isComparing]);
-
-  const calculateImageGeometry = useCallback(() => {
-      const img = imgRef.current;
-      const container = containerRef.current;
-      if (!img || !container) return;
-
-      const { naturalWidth, naturalHeight } = img;
-      const { clientWidth: containerWidth, clientHeight: containerHeight } = container;
-
-      if (naturalWidth === 0 || naturalHeight === 0 || containerWidth === 0 || containerHeight === 0) return;
-
-      const imgRatio = naturalWidth / naturalHeight;
-      const containerRatio = containerWidth / containerHeight;
-
-      let renderedWidth, renderedHeight, offsetX, offsetY;
-      
-      if (imgRatio > containerRatio) {
-          renderedWidth = containerWidth;
-          renderedHeight = containerWidth / imgRatio;
-          offsetX = 0;
-          offsetY = (containerHeight - renderedHeight) / 2;
-      } else {
-          renderedHeight = containerHeight;
-          renderedWidth = containerHeight * imgRatio;
-          offsetX = (containerWidth - renderedWidth) / 2;
-          offsetY = 0;
-      }
-      
-      setImageGeom({ naturalWidth, naturalHeight, renderedWidth, renderedHeight, offsetX, offsetY });
-
-      // Sync mask canvas size
-      const maskCanvas = maskCanvasRef.current;
-      if (maskCanvas && (maskCanvas.width !== naturalWidth || maskCanvas.height !== naturalHeight)) {
-          maskCanvas.width = naturalWidth;
-          maskCanvas.height = naturalHeight;
-          if (maskDataUrl) {
-              const maskImg = new Image();
-              maskImg.onload = () => {
-                  maskCanvas.getContext('2d')?.drawImage(maskImg, 0, 0);
-              }
-              maskImg.src = maskDataUrl;
-          }
-      }
-
-  }, [maskDataUrl]);
-
-  useEffect(() => {
-    const maskCanvas = maskCanvasRef.current;
-    if (maskCanvas && imageGeom.naturalWidth > 0) {
-        const ctx = maskCanvas.getContext('2d');
-        if (ctx) {
-            ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
-            if (maskDataUrl) {
-                const maskImg = new Image();
-                maskImg.onload = () => {
-                    ctx.drawImage(maskImg, 0, 0, maskCanvas.width, maskCanvas.height);
+            detectedObjects.forEach(obj => {
+                const img = new Image();
+                img.src = obj.mask;
+                img.onload = () => {
+                    newObjectImages[obj.mask] = img;
+                    loadedCount++;
+                    if (loadedCount === detectedObjects.length) {
+                        setObjectImages(newObjectImages);
+                    }
                 };
-                maskImg.src = maskDataUrl;
+            });
+        } else {
+            setObjectImages({});
+        }
+    }, [detectedObjects]);
+    
+    const objectSelectionColors = useMemo(() => [
+        '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#6366F1'
+    ], []);
+
+    // Fit image to container. This now runs whenever the displayed image size changes.
+    useEffect(() => {
+        const checkSize = () => {
+            if (containerRef.current && displayedImg && displayedImageSize.width > 0) {
+                const { width: containerWidth, height: containerHeight } = containerRef.current.getBoundingClientRect();
+                setDimensions({ width: containerWidth, height: containerHeight });
+
+                const scaleX = containerWidth / displayedImageSize.width;
+                const scaleY = containerHeight / displayedImageSize.height;
+                const initialScale = Math.min(scaleX, scaleY, 1);
+                
+                onStageStateChange({
+                    scale: initialScale,
+                    x: (containerWidth - displayedImageSize.width * initialScale) / 2,
+                    y: (containerHeight - displayedImageSize.height * initialScale) / 2,
+                });
             }
-        }
-    }
-}, [maskDataUrl, imageGeom.naturalWidth]);
-
-  useEffect(() => {
-      const container = containerRef.current;
-      if (!container) return;
-      const resizeObserver = new ResizeObserver(() => {
-        calculateImageGeometry();
-        fitToView();
-      });
-      resizeObserver.observe(container);
-      return () => resizeObserver.disconnect();
-  }, [calculateImageGeometry, fitToView]);
-  
-  const getCoordsFromEvent = (e: React.MouseEvent): {x: number, y: number} | null => {
-    const container = containerRef.current;
-    if (!container || !imageGeom.naturalWidth) return null;
-
-    const { naturalWidth, naturalHeight, renderedWidth, renderedHeight, offsetX, offsetY } = imageGeom;
-
-    const rect = container.getBoundingClientRect();
-    const containerX = e.clientX - rect.left;
-    const containerY = e.clientY - rect.top;
+        };
+        checkSize();
+        window.addEventListener('resize', checkSize);
+        return () => {
+            window.removeEventListener('resize', checkSize);
+            if (baseImageUrl) URL.revokeObjectURL(baseImageUrl);
+        };
+    }, [displayedImg, displayedImageSize, onStageStateChange, baseImageUrl]);
     
-    const unscaledX = (containerX - transform.x) / transform.scale;
-    const unscaledY = (containerY - transform.y) / transform.scale;
-    
-    const imageRelativeX = unscaledX - offsetX;
-    const imageRelativeY = unscaledY - offsetY;
+    const handleZoom = useCallback((direction: 'in' | 'out') => {
+        const stage = (stageRef as React.RefObject<Konva.Stage>).current;
+        if (!stage) return;
 
-    const x = Math.round(imageRelativeX * (naturalWidth / renderedWidth));
-    const y = Math.round(imageRelativeY * (naturalHeight / renderedHeight));
-    
-    return { x, y };
-  };
+        const oldScale = stage.scaleX();
+        const center = {
+            x: dimensions.width / 2,
+            y: dimensions.height / 2,
+        };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (!containerRef.current || activeTool === 'crop' || editorMode === 'masking' || isComparing) return;
+        const mousePointTo = {
+            x: (center.x - stage.x()) / oldScale,
+            y: (center.y - stage.y()) / oldScale,
+        };
+        
+        const scaleBy = 1.2;
+        const newScale = direction === 'in' ? oldScale * scaleBy : oldScale / scaleBy;
 
-    const { deltaY } = e;
-    const scaleAmount = -deltaY / 500;
-    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, transform.scale * (1 + scaleAmount)));
-    
-    const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+        onStageStateChange({
+            scale: newScale,
+            x: center.x - mousePointTo.x * newScale,
+            y: center.y - mousePointTo.y * newScale,
+        });
+    }, [dimensions.width, dimensions.height, onStageStateChange, stageRef]);
 
-    const newX = mouseX - ((mouseX - transform.x) / transform.scale) * newScale;
-    const newY = mouseY - ((mouseY - transform.y) / transform.scale) * newScale;
-    
-    setTransform({ scale: newScale, x: newX, y: newY });
-  };
-  
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (editorMode === 'masking') {
-        const coords = getCoordsFromEvent(e);
-        if (coords) {
-            setIsDrawing(true);
-            const ctx = maskCanvasRef.current?.getContext('2d');
-            if (!ctx) return;
+    const handleResetZoom = useCallback(() => {
+        if (containerRef.current && displayedImg && displayedImageSize.width > 0) {
+            const { width: containerWidth, height: containerHeight } = containerRef.current.getBoundingClientRect();
+
+            const scaleX = containerWidth / containerWidth;
+            const scaleY = containerHeight / displayedImageSize.height;
+            const initialScale = Math.min(scaleX, scaleY, 1);
             
-            ctx.beginPath();
-            ctx.moveTo(coords.x, coords.y);
-            drawingContext.current = { lastX: coords.x, lastY: coords.y };
+            onStageStateChange({
+                scale: initialScale,
+                x: (containerWidth - displayedImageSize.width * initialScale) / 2,
+                y: (containerHeight - displayedImageSize.height * initialScale) / 2,
+            });
         }
-        return;
-    }
+    }, [displayedImg, displayedImageSize.width, displayedImageSize.height, onStageStateChange]);
 
-    if ((isSpacePressed || e.button === 1) && activeTool !== 'crop' && !isComparing) { // Spacebar or Middle mouse button
-        e.preventDefault();
-        panStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
-        setIsPanning(true);
-        ignoreClick.current = true;
-    }
-  };
-  
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (editorMode === 'masking') {
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (rect) {
-            setCursorPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    // Initialize or clear the mask when masking mode changes.
+    useEffect(() => {
+        const maskLayer = maskLayerRef.current;
+        if (!maskLayer) return;
+
+        maskLayer.destroyChildren();
+
+        if (isMasking) {
+            if (maskDataUrl && maskImgFromUrl) {
+                setInitialMaskImage(maskImgFromUrl);
+                 maskLayer.add(new Konva.Image({
+                    image: maskImgFromUrl,
+                    width: displayedImageSize.width,
+                    height: displayedImageSize.height,
+                    globalCompositeOperation: 'source-over',
+                }));
+            } else {
+                setInitialMaskImage(null);
+            }
+        } else {
+            setInitialMaskImage(null);
         }
-    }
-      
-    if (isDrawing && editorMode === 'masking') {
-        const coords = getCoordsFromEvent(e);
-        const ctx = maskCanvasRef.current?.getContext('2d');
-        if (coords && ctx && drawingContext.current) {
-            ctx.lineTo(coords.x, coords.y);
-            ctx.lineWidth = brushSize * (imageGeom.naturalWidth / imageGeom.renderedWidth);
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            ctx.globalCompositeOperation = isErasing ? 'destination-out' : 'source-over';
-            ctx.strokeStyle = isErasing ? 'rgba(0,0,0,1)' : 'rgba(255,255,255,1)';
-            ctx.stroke();
-            drawingContext.current = { lastX: coords.x, lastY: coords.y };
-        }
-        return;
-    }
+        maskLayer.draw();
 
-    if (isPanning) {
-        const newX = e.clientX - panStart.current.x;
-        const newY = e.clientY - panStart.current.y;
-        setTransform({ ...transform, x: newX, y: newY });
-    }
-  };
-  
-  const handleMouseUp = () => {
-    if (isDrawing && editorMode === 'masking') {
-        const canvas = maskCanvasRef.current;
-        if(canvas) {
-          onMaskChange(canvas.toDataURL());
-        }
-        setIsDrawing(false);
-        drawingContext.current = null;
-        return;
-    }
-    if (isPanning) {
-      setIsPanning(false);
-      setTimeout(() => { ignoreClick.current = false; }, 0);
-    }
-  };
-
-  const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (ignoreClick.current || isSpacePressed || isPanning || !imgRef.current || activeTool === 'crop' || editorMode === 'masking' || isComparing) {
-        return;
-    }
-
-    // Only allow hotspot clicks for tools that use them.
-    if (activeTool !== 'enhance' && activeTool !== 'addObject') {
-        return;
-    }
+    }, [isMasking, maskDataUrl, maskImgFromUrl, displayedImageSize]);
     
-    const coords = getCoordsFromEvent(e);
-    if (!coords) return;
-    
-    const { naturalWidth, naturalHeight } = imageGeom;
-    if (coords.x < 0 || coords.x > naturalWidth || coords.y < 0 || coords.y > naturalHeight) {
-      return;
-    }
-    onHotspotClick(coords);
-  };
+    // Animate the hotspot marker with a pulsing effect
+    useEffect(() => {
+        if (editHotspot && hotspotRef.current) {
+            const anim = new Konva.Animation(frame => {
+                if (!frame) return;
+                const scale = 1 + Math.sin(frame.time / 200) * 0.2; // pulse effect
+                hotspotRef.current?.scaleX(scale);
+                hotspotRef.current?.scaleY(scale);
+            }, hotspotRef.current.getLayer());
 
-  const adjustZoom = (amount: number) => {
-    if (activeTool === 'crop' || editorMode === 'masking' || isComparing) return;
-    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, transform.scale + amount));
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) {
-      setTransform({ ...transform, scale: newScale });
-      return;
-    }
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const newX = centerX - ((centerX - transform.x) / transform.scale) * newScale;
-    const newY = centerY - ((centerY - transform.y) / transform.scale) * newScale;
-    setTransform({ scale: newScale, x: newX, y: newY });
-  };
+            anim.start();
+            // FIX: The useEffect cleanup function must return void. anim.stop() returns the animation instance.
+            return () => {
+                anim.stop();
+            };
+        }
+    }, [editHotspot]);
 
-  const handleMouseEnter = () => {
-    if (editorMode === 'masking') {
-        setIsCursorVisible(true);
-    }
-  };
 
-  const handleMouseLeave = () => {
-      setIsCursorVisible(false);
-      // Also stop drawing if mouse leaves while pressed
-      if (isDrawing) {
-          handleMouseUp();
-      }
-      if (isDraggingSlider) {
-          setIsDraggingSlider(false);
-      }
-  };
+    const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
+        // Deselect if clicking on the background
+        const didClickOnEmpty = e.target === e.target.getStage();
+        if (didClickOnEmpty) {
+            onSelectLayer(null);
+        }
 
-  // --- Compare Slider Logic ---
-  const handleSliderMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingSlider(true);
-  };
-  
-  const handleSliderMouseMove = useCallback((e: MouseEvent) => {
-    if (!isDraggingSlider || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    let newPosition = (x / rect.width) * 100;
-    newPosition = Math.max(0, Math.min(100, newPosition)); // Clamp between 0 and 100
-    setSliderPosition(newPosition);
-  }, [isDraggingSlider]);
+        if (!isMasking) return;
+        isDrawing.current = true;
+        const stage = e.target.getStage();
+        const maskLayer = maskLayerRef.current;
+        if (!stage || !maskLayer) return;
 
-  const handleSliderMouseUp = useCallback(() => {
-    setIsDraggingSlider(false);
-  }, []);
+        const transform = stage.getAbsoluteTransform().copy().invert();
+        const pos = stage.getPointerPosition();
+        if (!pos) return;
+        
+        const relativePos = transform.point(pos);
 
-  useEffect(() => {
-    if (isDraggingSlider) {
-      window.addEventListener('mousemove', handleSliderMouseMove);
-      window.addEventListener('mouseup', handleSliderMouseUp);
-    }
-    return () => {
-      window.removeEventListener('mousemove', handleSliderMouseMove);
-      window.removeEventListener('mouseup', handleSliderMouseUp);
+        const isSoftBrush = brushShape === 'circle';
+        const shadowBlur = isSoftBrush ? (1 - brushHardness) * brushSize * 0.7 : 0;
+
+        // Create Konva line directly, don't update React state for performance
+        const newLine = new Konva.Line({
+            stroke: '#FFFFFF',
+            strokeWidth: brushSize,
+            globalCompositeOperation: brushShape === 'circle' ? 'source-over' : 'destination-out',
+            lineCap: 'round',
+            lineJoin: 'round',
+            tension: 0.5,
+            points: [relativePos.x, relativePos.y],
+            // Soft brush effect
+            shadowColor: '#FFFFFF',
+            shadowBlur: shadowBlur,
+            shadowEnabled: isSoftBrush,
+            shadowOffsetX: 0,
+            shadowOffsetY: 0,
+        });
+        
+        maskLayer.add(newLine);
+        currentLine.current = newLine;
     };
-  }, [isDraggingSlider, handleSliderMouseMove, handleSliderMouseUp]);
+    
+    const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
+        if (!isDrawing.current || !isMasking || !currentLine.current) return;
+        
+        const stage = e.target.getStage();
+        if (!stage) return;
+    
+        const transform = stage.getAbsoluteTransform().copy().invert();
+        const point = stage.getPointerPosition();
+        if (!point) return;
+    
+        const relativePos = transform.point(point);
+    
+        // Update Konva line directly, bypassing React state
+        const newPoints = currentLine.current.points().concat([relativePos.x, relativePos.y]);
+        currentLine.current.points(newPoints);
+        
+        maskLayerRef.current?.batchDraw();
+    };
+    
+    const handleMouseUp = () => {
+        if (!isDrawing.current) return;
+        isDrawing.current = false;
+        currentLine.current = null;
+    
+        if (isMasking && maskLayerRef.current && displayedImageSize.width > 0) {
+            // Clone the visible layer to create a temporary, untransformed version for export.
+            // This prevents the stage's pan/zoom from affecting the captured image.
+            const exportLayer = maskLayerRef.current.clone();
+            exportLayer.opacity(1); // Ensure full opacity for the mask capture.
+    
+            const transparentMaskCanvas = exportLayer.toCanvas({
+                x: 0,
+                y: 0,
+                width: displayedImageSize.width,
+                height: displayedImageSize.height,
+                pixelRatio: 1 // Explicitly set to 1 to avoid high-DPI scaling issues.
+            });
+    
+            const finalCanvas = document.createElement('canvas');
+            finalCanvas.width = displayedImageSize.width;
+            finalCanvas.height = displayedImageSize.height;
+            const ctx = finalCanvas.getContext('2d');
+    
+            if (!ctx || !transparentMaskCanvas) {
+                console.error("Failed to create canvas or context for mask generation.");
+                onMaskChange(null);
+                return;
+            }
+    
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+            ctx.drawImage(transparentMaskCanvas, 0, 0);
+    
+            const finalMaskDataUrl = finalCanvas.toDataURL();
+            onMaskChange(finalMaskDataUrl);
+    
+        } else if (isMasking) {
+            onMaskChange(null);
+        }
+    };
 
-  if (!imageSrc) return null;
-  
-  let cursorClass = 'cursor-default';
-  if (isComparing) {
-      cursorClass = 'cursor-default';
-  } else if (editorMode === 'masking') {
-      cursorClass = 'cursor-none'; // Custom cursor will be shown
-  } else if (isSpacePressed || isPanning) {
-      cursorClass = isPanning ? 'cursor-grabbing' : 'cursor-grab';
-  } else if (activeTool === 'crop') {
-      cursorClass = 'cursor-default';
-  } else if (['enhance', 'addObject'].includes(activeTool!)) {
-      cursorClass = 'cursor-crosshair';
-  } else {
-      cursorClass = 'cursor-grab';
-  }
+    const handleImageClick = (e: KonvaEventObject<MouseEvent>) => {
+        if (detectedObjects || activeTool === 'transform' || isMasking) return;
+        
+        const stage = e.target.getStage();
+        if (!stage || !imageRef.current) return;
 
-  const imageStyle: React.CSSProperties = {
-      filter: `hue-rotate(${colorAdjustments.hue * 1.8}deg) saturate(${100 + colorAdjustments.saturation}%) brightness(${100 + colorAdjustments.brightness}%)`,
-      imageRendering: 'pixelated'
-  };
+        const pos = stage.getPointerPosition();
+        if (!pos) return;
 
-  const imageContent = (
-    <img
-        ref={imgRef}
-        src={imageSrc}
-        alt="Your content"
-        className="h-full w-full object-contain pointer-events-none"
-        onLoad={calculateImageGeometry}
-        draggable="false"
-        style={imageStyle}
-    />
-  );
-  
-  const imageContainerStyle: React.CSSProperties = {
-      position: 'absolute',
-      width: `${imageGeom.renderedWidth}px`,
-      height: `${imageGeom.renderedHeight}px`,
-      top: `${imageGeom.offsetY}px`,
-      left: `${imageGeom.offsetX}px`,
-  };
+        const relativeX = (pos.x - stage.x()) / stage.scaleX();
+        const relativeY = (pos.y - stage.y()) / stage.scaleY();
+        
+        // Ensure click is within image bounds
+        if (relativeX < 0 || relativeX > displayedImageSize.width || relativeY < 0 || relativeY > displayedImageSize.height) return;
 
-  return (
-    <div className="w-full h-full flex justify-center items-center p-4 relative bg-black/20 rounded-lg shadow-inner">
+        const point = {
+            x: (relativeX / displayedImageSize.width) * 100,
+            y: (relativeY / displayedImageSize.height) * 100
+        };
+
+        if (activeTool === 'cssInspector') {
+            onInspectElement(point);
+        } else if (['addObject', 'enhance'].includes(activeTool)) {
+            onHotspot(point);
+        }
+    };
+    
+    const handleWheel = (e: KonvaEventObject<WheelEvent>) => {
+        e.evt.preventDefault();
+        const stage = e.target.getStage();
+        if (!stage) return;
+
+        const oldScale = stage.scaleX();
+        const pointer = stage.getPointerPosition();
+        if (!pointer) return;
+
+        const mousePointTo = {
+            x: (pointer.x - stage.x()) / oldScale,
+            y: (pointer.y - stage.y()) / oldScale,
+        };
+
+        const newScale = e.evt.deltaY > 0 ? oldScale * 0.9 : oldScale * 1.1;
+
+        onStageStateChange({
+            scale: newScale,
+            x: pointer.x - mousePointTo.x * newScale,
+            y: pointer.y - mousePointTo.y * newScale,
+        });
+    };
+
+    
+    const cursorStyle = useMemo(() => {
+        if (detectedObjects) return 'default';
+        if (activeTool === 'transform') return 'default';
+        if (isMasking) return 'crosshair';
+        if (['addObject', 'enhance', 'cssInspector'].includes(activeTool)) return 'pointer';
+        return 'grab';
+    }, [isMasking, activeTool, detectedObjects]);
+
+    const handleUpdateFullTransform = useCallback((layerId: string, newAttrs: any) => {
+        const layer = layers.find(l => l.id === layerId);
+        if (layer?.transform) {
+            onUpdateLayerTransform(layerId, { ...layer.transform, ...newAttrs });
+        }
+    }, [layers, onUpdateLayerTransform]);
+
+    return (
         <div 
-          ref={containerRef}
-          className={`relative w-full h-full overflow-hidden select-none ${cursorClass}`}
-          onWheel={handleWheel}
-          onClick={handleContainerClick}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-          onMouseEnter={handleMouseEnter}
+            ref={containerRef} 
+            className={`w-full h-full relative transition-all duration-300 ${isMasking ? 'masking-active-border' : 'border-2 border-transparent'}`}
         >
-            <div
-                className="relative w-full h-full"
-                style={{
-                    transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-                    transformOrigin: 'top left',
+            <Stage 
+                width={dimensions.width} 
+                height={dimensions.height}
+                ref={stageRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onWheel={handleWheel}
+                scaleX={stageState.scale}
+                scaleY={stageState.scale}
+                x={stageState.x}
+                y={stageState.y}
+                draggable={!isMasking && !detectedObjects && activeTool !== 'transform'}
+                onDragEnd={(e) => {
+                    onStageStateChange({ ...stageState, x: e.target.x(), y: e.target.y() });
+                }}
+                style={{ cursor: cursorStyle }}
+                onClick={(e: KonvaEventObject<MouseEvent>) => {
+                    const didClickOnEmpty = e.target === e.target.getStage();
+                    if (didClickOnEmpty) {
+                        onSelectLayer(null);
+                    }
                 }}
             >
-              {isComparing ? (
-                <div style={imageContainerStyle}>
-                    <img
-                        src={originalImageSrc}
-                        alt="Original content"
-                        className="absolute top-0 left-0 h-full w-full object-contain pointer-events-none"
-                        style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
-                        draggable="false"
-                    />
-                    <img
-                        src={imageSrc}
-                        alt="Edited content"
-                        className="absolute top-0 left-0 h-full w-full object-contain pointer-events-none"
-                        style={{ clipPath: `inset(0 0 0 ${sliderPosition}%)` }}
-                        draggable="false"
-                    />
-                </div>
-              ) : (
-                <div style={imageContainerStyle}>
-                    {activeTool === 'crop' ? (
-                        <ReactCrop
-                            crop={crop}
-                            onChange={(_, percentCrop) => onCropChange(percentCrop)}
-                            onComplete={(c) => onCropComplete(c)}
-                            aspect={aspect}
-                            className="flex justify-center items-center h-full w-full"
-                        >
-                            {imageContent}
-                        </ReactCrop>
-                    ) : imageContent}
-
-                    {maskDataUrl && editorMode === 'normal' && (
-                        <div 
-                        className="absolute top-0 left-0 w-full h-full pointer-events-none"
-                        style={{
-                            maskImage: `url(${maskDataUrl})`,
-                            WebkitMaskImage: `url(${maskDataUrl})`,
-                            maskSize: '100% 100%',
-                            WebkitMaskSize: '100% 100%',
-                            backgroundColor: 'rgba(239, 68, 68, 0.5)',
-                        }}
+                <KonvaLayer>
+                    {displayedImg && (
+                        <KonvaImage
+                            ref={imageRef}
+                            image={displayedImg}
+                            width={displayedImageSize.width}
+                            height={displayedImageSize.height}
+                            alt="Editable image"
+                            onClick={handleImageClick}
+                            onTap={handleImageClick}
                         />
                     )}
 
-                    <canvas 
-                        ref={maskCanvasRef}
-                        className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-50"
-                        style={{ 
-                            imageRendering: 'pixelated',
-                            display: editorMode === 'masking' ? 'block' : 'none',
-                            mixBlendMode: 'screen'
-                        }} 
-                    />
-                    
-                    {editHotspot && (activeTool === 'enhance' || activeTool === 'addObject') && imageGeom.renderedWidth > 0 && (() => {
-                        const scale = imageGeom.renderedWidth / imageGeom.naturalWidth;
-                        const left = editHotspot.x * scale;
-                        const top = editHotspot.y * scale;
-                        return (
-                          <div
-                            className="absolute w-6 h-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500/50 pointer-events-none ring-2 ring-blue-500 animate-ping-once"
-                            style={{ left: `${left}px`, top: `${top}px` }}
-                          />
-                        );
-                    })()}
-                </div>
-              )}
-            </div>
-            {isComparing && (
-                <div
-                    className="absolute top-0 h-full w-1 bg-white/80 cursor-ew-resize z-10 flex items-center justify-center"
-                    style={{ left: `${sliderPosition}%`, transform: 'translateX(-50%)' }}
-                    onMouseDown={handleSliderMouseDown}
-                >
-                    <div className="w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm shadow-lg flex items-center justify-center text-gray-800 font-black text-lg select-none">
-                        &lt;&nbsp;&gt;
-                    </div>
-                </div>
-            )}
-        </div>
+                    {imageLayers.map(layer => (
+                        <TransformableImage
+                            key={layer.id}
+                            layer={layer}
+                            isSelected={selectedLayerId === layer.id}
+                            onSelect={() => {
+                                if (activeTool === 'transform') {
+                                    onSelectLayer(layer.id);
+                                }
+                            }}
+                            onTransform={(newAttrs) => onUpdateLayerTransform(layer.id, newAttrs)}
+                            onDragEnd={(newAttrs) => handleUpdateFullTransform(layer.id, newAttrs)}
+                        />
+                    ))}
+                </KonvaLayer>
 
-        {/* Brush Cursor */}
-        {editorMode === 'masking' && isCursorVisible && (
-            <div
-                className={`absolute rounded-full pointer-events-none transition-transform duration-100 ${isDrawing ? 'scale-90 bg-white/30' : 'bg-transparent'}`}
-                style={{
-                    left: `${cursorPos.x}px`,
-                    top: `${cursorPos.y}px`,
-                    width: `${brushSize}px`,
-                    height: `${brushSize}px`,
-                    border: `2px solid ${isErasing ? '#ef4444' : 'white'}`,
-                    transform: 'translate(-50%, -50%)',
-                    boxShadow: '0 0 10px rgba(0, 0, 0, 0.5)',
-                    mixBlendMode: 'difference',
-                }}
+                <KonvaLayer
+                    ref={maskLayerRef}
+                    opacity={isMasking ? maskPreviewOpacity : 0}
+                    listening={false}
+                />
+
+                {detectedObjects && (
+                     <KonvaLayer>
+                        {detectedObjects.map((obj, index) => {
+                            const isSelected = selectedObjectMasks.includes(obj.mask);
+                            const color = objectSelectionColors[index % objectSelectionColors.length];
+                            if (objectImages[obj.mask]) {
+                                return (
+                                    <KonvaImage
+                                        key={obj.mask}
+                                        image={objectImages[obj.mask]}
+                                        width={displayedImageSize.width}
+                                        height={displayedImageSize.height}
+                                        fill={color}
+                                        opacity={isSelected ? 0.6 : 0.4}
+                                        globalCompositeOperation="multiply"
+                                        onClick={() => onObjectMaskToggle(obj.mask)}
+                                        onTap={() => onObjectMaskToggle(obj.mask)}
+                                        onMouseEnter={e => {
+                                            const stage = e.target.getStage();
+                                            if (stage) stage.container().style.cursor = 'pointer';
+                                        }}
+                                        onMouseLeave={e => {
+                                             const stage = e.target.getStage();
+                                            if (stage) stage.container().style.cursor = 'default';
+                                        }}
+                                    />
+                                );
+                            }
+                            return null;
+                        })}
+                    </KonvaLayer>
+                )}
+                <KonvaLayer listening={false}>
+                    {editHotspot && displayedImageSize.width > 0 && (
+                        <Circle
+                            ref={hotspotRef}
+                            x={(editHotspot.x / 100) * displayedImageSize.width}
+                            y={(editHotspot.y / 100) * displayedImageSize.height}
+                            radius={10 / stageState.scale}
+                            stroke="#3B82F6"
+                            strokeWidth={2 / stageState.scale}
+                            fill="#3B82F64D"
+                        />
+                    )}
+                    {inspectedElementMask && inspectedMaskImage && (
+                        <KonvaImage
+                            image={inspectedMaskImage}
+                            width={displayedImageSize.width}
+                            height={displayedImageSize.height}
+                            fill="#3B82F6"
+                            opacity={0.5}
+                            globalCompositeOperation="multiply"
+                        />
+                    )}
+                </KonvaLayer>
+            </Stage>
+            <ZoomControls 
+                scale={stageState.scale}
+                onZoomIn={() => handleZoom('in')}
+                onZoomOut={() => handleZoom('out')}
+                onResetZoom={handleResetZoom}
             />
-        )}
-        
-        <div className="absolute bottom-4 left-4 flex items-center gap-1 bg-gray-800/70 p-1.5 rounded-lg backdrop-blur-sm text-sm">
-            <Tooltip text="Zoom Out (Ctrl/Cmd + -)">
-              <button onClick={() => adjustZoom(-0.2)} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={activeTool === 'crop' || editorMode === 'masking' || isComparing}><MagnifyingGlassMinusIcon className="w-5 h-5" /></button>
-            </Tooltip>
-            <span className="text-gray-200 font-mono w-16 text-center tabular-nums">
-                {(transform.scale * 100).toFixed(0)}%
-            </span>
-            <Tooltip text="Zoom In (Ctrl/Cmd + +)">
-              <button onClick={() => adjustZoom(0.2)} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={activeTool === 'crop' || editorMode === 'masking' || isComparing}><MagnifyingGlassPlusIcon className="w-5 h-5" /></button>
-            </Tooltip>
-            <Tooltip text="Fit to View (Ctrl/Cmd + 0)">
-              <button onClick={fitToView} className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={activeTool === 'crop' || editorMode === 'masking' || isComparing}><ArrowsPointingOutIcon className="w-5 h-5" /></button>
-            </Tooltip>
-            {canUndo && (
-                <div className="border-l border-gray-600 ml-1 pl-1">
-                    <Tooltip text="Compare Before/After">
-                      <button onClick={() => onCompareChange(!isComparing)} className={`p-1.5 rounded-md transition-colors ${isComparing ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'}`}>
-                        <EyeIcon className="w-5 h-5" />
-                      </button>
-                    </Tooltip>
-                </div>
-            )}
         </div>
-    </div>
-  );
+    );
 });
 
 export default EditorCanvas;

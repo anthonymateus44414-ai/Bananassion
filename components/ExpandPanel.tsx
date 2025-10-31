@@ -12,59 +12,81 @@ import {
     ArrowsPointingOutIcon
 } from './icons';
 import Tooltip from './Tooltip';
-import { Tool } from '../types';
+import { Layer, Tool } from '../types';
+import Spinner from './Spinner';
+
+interface RecipeStep {
+  id: string;
+  name: string;
+  tool: Tool;
+  params: any;
+}
 
 interface ExpandPanelProps {
-  onApplyExpansion: (direction: 'up' | 'down' | 'left' | 'right', percentage: number) => void;
-  onApplyUncrop: (percentage: number) => void;
+  onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
   isLoading: boolean;
-  mode?: 'interactive' | 'recipe';
-  onAddToRecipe?: (step: { name: string; tool: Tool; params: { direction: Direction, percentage: ExpandSize } }) => void;
+  onAddToRecipe?: (step: Omit<RecipeStep, 'id'>) => void;
+  mode?: 'layer' | 'recipe';
 }
 
 type ExpandSize = 25 | 50;
 type Direction = 'up' | 'down' | 'left' | 'right';
 
-const ExpandPanel: React.FC<ExpandPanelProps> = ({ onApplyExpansion, onApplyUncrop, isLoading, mode = 'interactive', onAddToRecipe }) => {
+const ExpandPanel: React.FC<ExpandPanelProps> = ({ onAddLayer, isLoading, onAddToRecipe, mode = 'layer' }) => {
   const [expandSize, setExpandSize] = useState<ExpandSize>(25);
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+
 
   const directionControls: { name: string; direction: Direction; icon: React.ReactNode }[] = [
-    { name: 'Expand Up', direction: 'up', icon: <ArrowUpIcon className="w-8 h-8" /> },
-    { name: 'Expand Down', direction: 'down', icon: <ArrowDownIcon className="w-8 h-8" /> },
-    { name: 'Expand Left', direction: 'left', icon: <ArrowLeftIcon className="w-8 h-8" /> },
-    { name: 'Expand Right', direction: 'right', icon: <ArrowRightIcon className="w-8 h-8" /> },
+    { name: 'Расширить вверх', direction: 'up', icon: <ArrowUpIcon className="w-8 h-8" /> },
+    { name: 'Расширить вниз', direction: 'down', icon: <ArrowDownIcon className="w-8 h-8" /> },
+    { name: 'Расширить влево', direction: 'left', icon: <ArrowLeftIcon className="w-8 h-8" /> },
+    { name: 'Расширить вправо', direction: 'right', icon: <ArrowRightIcon className="w-8 h-8" /> },
   ];
 
-  const handleClick = (direction: Direction, name: string) => {
-    if (mode === 'interactive') {
-      onApplyExpansion(direction, expandSize);
-    } else if (onAddToRecipe) {
+  const handleApply = (params: any, name: string) => {
+    setActiveAction(name);
+    if (mode === 'recipe' && onAddToRecipe) {
       onAddToRecipe({
-        name: `${name} by ${expandSize}%`,
+        name,
         tool: 'expand',
-        params: { direction, percentage: expandSize }
+        params,
+      });
+    } else {
+      onAddLayer({
+        name,
+        tool: 'expand',
+        params,
       });
     }
+  }
+
+  const handleDirectionClick = (direction: Direction, name: string) => {
+    handleApply({ direction, percentage: expandSize }, `${name} на ${expandSize}%`);
+  };
+
+  const handleUncropClick = () => {
+    handleApply({ percentage: expandSize }, `Раскадрировать на ${expandSize}%`);
   };
 
   return (
-    <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
-      <h3 className="text-lg font-semibold text-center text-gray-300">Expand Canvas</h3>
-      <p className="text-sm text-center text-gray-400 -mt-2">Use AI to expand the image beyond its original borders.</p>
+    <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col gap-4 animate-fade-in">
+      <h3 className="text-xl font-bold text-center text-text-primary">Расширить холст</h3>
+      <p className="text-sm text-center text-text-secondary -mt-2">Используйте ИИ для расширения изображения за его первоначальные границы.</p>
       
       <div className="flex flex-col items-center gap-4">
         {/* Size Selection */}
-        <div className="flex items-center gap-2 bg-gray-900/40 rounded-lg p-1">
-          <span className="text-sm font-medium text-gray-400 pl-2">Expand by:</span>
+        <div className="flex items-center gap-2 bg-stone-100 rounded-lg p-1 border border-border-color">
+          <span className="text-sm font-bold text-text-secondary pl-2">Расширить на:</span>
           {( [25, 50] as ExpandSize[] ).map(size => (
-            <Tooltip key={size} text={`Expand by ${size}%`}>
+            <Tooltip side="left" key={size} text={`Расширить на ${size}%`}>
                 <button
                     onClick={() => setExpandSize(size)}
                     disabled={isLoading}
-                    className={`px-4 py-2 rounded-md text-base font-semibold transition-all duration-200 active:scale-95 disabled:opacity-50 ${
+                    className={`px-4 py-2 rounded-md text-base font-bold transition-all duration-200 active:scale-[0.98] disabled:opacity-50 ${
                         expandSize === size 
-                        ? 'bg-gradient-to-br from-blue-600 to-blue-500 text-white shadow-md shadow-blue-500/20' 
-                        : 'bg-white/10 hover:bg-white/20 text-gray-200'
+                        ? 'bg-primary text-white shadow-sm' 
+                        : 'text-text-secondary hover:text-text-primary'
                     }`}
                 >
                     {size}%
@@ -73,32 +95,29 @@ const ExpandPanel: React.FC<ExpandPanelProps> = ({ onApplyExpansion, onApplyUncr
           ))}
         </div>
 
-        {mode === 'interactive' && (
-            <Tooltip text={`Generatively fill all sides of the image, expanding it by ${expandSize}%`}>
-                <button
-                    onClick={() => onApplyUncrop(expandSize)}
-                    disabled={isLoading}
-                    className="w-full max-w-sm mt-2 bg-gradient-to-br from-purple-600 to-indigo-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-purple-500/20 hover:shadow-xl hover:shadow-purple-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-purple-800 disabled:to-indigo-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-3"
-                >
-                    <ArrowsPointingOutIcon className="w-6 h-6" />
-                    Uncrop / Outpaint
-                </button>
-            </Tooltip>
-        )}
+        <Tooltip side="left" text={`Генеративно заполнить все стороны изображения, расширив его на ${expandSize}%`}>
+            <button
+                onClick={handleUncropClick}
+                disabled={isLoading}
+                className="w-full max-w-sm mt-2 bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-3 h-[52px]"
+            >
+                {isLoading && activeAction?.includes('Uncrop') ? <Spinner size="sm" /> : <><ArrowsPointingOutIcon className="w-6 h-6" /> Раскадрировать</>}
+            </button>
+        </Tooltip>
 
         {/* Directional Controls */}
         <div className="w-full pt-2">
-            <p className="text-sm text-center text-gray-400 mb-2">{mode === 'interactive' ? 'Or expand in a single direction:' : 'Select a direction to add to the recipe:'}</p>
+            <p className="text-sm text-center text-text-secondary mb-2">Или расширить в одном направлении:</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {directionControls.map(({ name, direction, icon }) => (
-                <Tooltip key={name} text={name}>
+                <Tooltip side="left" key={name} text={name}>
                     <button
-                    onClick={() => handleClick(direction, name)}
+                    onClick={() => handleDirectionClick(direction, name)}
                     disabled={isLoading}
-                    className="flex flex-col items-center justify-center gap-2 w-full h-24 text-center bg-white/10 border border-transparent text-gray-200 font-semibold p-2 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/20 active:scale-95 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex flex-col items-center justify-center gap-2 w-full h-24 text-center bg-stone-50 text-text-primary border border-border-color font-semibold p-2 rounded-lg transition-all duration-200 ease-in-out hover:bg-stone-100 hover:border-stone-400 active:scale-[0.98] text-base disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                    {icon}
-                    <span className="text-sm">{name.replace('Expand ', '')}</span>
+                    {isLoading && activeAction?.includes(name) ? <Spinner /> : icon}
+                    <span className="text-sm">{name.replace('Расширить ', '')}</span>
                     </button>
                 </Tooltip>
                 ))}

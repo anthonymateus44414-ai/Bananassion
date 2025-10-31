@@ -4,33 +4,35 @@
 */
 
 import React, { useState } from 'react';
-import { UploadIcon, TrashIcon, LayersIcon } from './icons';
+import { UploadIcon, TrashIcon, PaintBrushIcon } from './icons';
 import Tooltip from './Tooltip';
 import { Layer } from '../types';
 import Spinner from './Spinner';
 
-interface MixPanelProps {
+interface StylePanelProps {
   onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
   isLoading: boolean;
 }
 
-interface ItemFile {
+interface ReferenceFile {
     id: string;
     file: File;
     preview: string;
 }
 
-const MixPanel: React.FC<MixPanelProps> = ({ onAddLayer, isLoading }) => {
-    const [itemFiles, setItemFiles] = useState<ItemFile[]>([]);
-    const [prompt, setPrompt] = useState('');
+const StylePanel: React.FC<StylePanelProps> = ({ onAddLayer, isLoading }) => {
+    const [referenceFiles, setReferenceFiles] = useState<ReferenceFile[]>([]);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
 
     const handleFileChange = (files: FileList | null) => {
-        if (!files) return;
-        const newItems: ItemFile[] = [];
+        if (!files || referenceFiles.length + files.length > 8) {
+            // Silently fail if too many files are selected to prevent alerts.
+            // The UI indicates the limit.
+            return;
+        }
+        
+        const newItems: ReferenceFile[] = [];
         const fileArray = Array.from(files);
-
-        // This ensures state is updated once after all files are read
         let filesProcessed = 0;
 
         fileArray.forEach((file) => {
@@ -43,7 +45,7 @@ const MixPanel: React.FC<MixPanelProps> = ({ onAddLayer, isLoading }) => {
                 });
                 filesProcessed++;
                 if (filesProcessed === fileArray.length) {
-                    setItemFiles(prev => [...prev, ...newItems]);
+                    setReferenceFiles(prev => [...prev, ...newItems].slice(0, 8));
                 }
             };
             reader.readAsDataURL(file);
@@ -51,58 +53,63 @@ const MixPanel: React.FC<MixPanelProps> = ({ onAddLayer, isLoading }) => {
     };
 
     const handleRemoveFile = (id: string) => {
-        setItemFiles(prev => prev.filter(item => item.id !== id));
+        setReferenceFiles(prev => prev.filter(item => item.id !== id));
     }
   
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const itemDataUrls = itemFiles.map(item => item.preview);
-        if (itemDataUrls.length > 0 && prompt.trim()) {
+        const referenceDataUrls = referenceFiles.map(item => item.preview);
+        if (referenceDataUrls.length > 0) {
             onAddLayer({
-              name: `Mix: ${prompt.slice(0, 20)}...`,
-              tool: 'mix',
-              params: { itemDataUrls, prompt }
+              name: `Перенос стиля`,
+              tool: 'style',
+              params: { referenceImages: referenceDataUrls }
             });
+            setReferenceFiles([]);
         }
     };
 
-    const hasFiles = itemFiles.length > 0;
+    const hasFiles = referenceFiles.length > 0;
 
     return (
         <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col gap-4 animate-fade-in">
-            <h3 className="text-xl font-bold text-center text-text-primary">Студия комбинирования</h3>
-            <p className="text-sm text-center text-text-secondary -mt-2">Загрузите один или несколько предметов (одежда, аксессуары) и опишите, как их скомбинировать на вашей фотографии.</p>
+            <h3 className="text-xl font-bold text-center text-text-primary">Применить стиль с изображения</h3>
+            <p className="text-sm text-center text-text-secondary -mt-2">Загрузите одно или несколько эталонных изображений, чтобы перенести их стиль на вашу фотографию.</p>
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                 {/* File Upload Area */}
                 <div className="flex flex-col gap-2">
-                    <Tooltip side="left" text="Загрузите изображения одежды или аксессуаров. Вы можете выбрать несколько файлов.">
+                    <Tooltip side="left" text="Загрузите от 1 до 8 изображений для использования в качестве эталона стиля.">
                         <label
-                            htmlFor="mix-match-upload"
-                            className={`w-full p-6 border-2 border-dashed rounded-lg text-center transition-colors ${isDraggingOver ? 'border-primary bg-primary/10 animate-pulse' : 'border-border-color cursor-pointer hover:border-primary hover:bg-primary/10'}`}
-                            onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+                            htmlFor="style-apply-upload"
+                            className={`w-full p-6 border-2 border-dashed rounded-lg text-center transition-colors ${
+                                isDraggingOver 
+                                ? 'border-primary bg-primary/10 animate-pulse' 
+                                : referenceFiles.length < 8 ? 'border-border-color cursor-pointer hover:border-primary hover:bg-primary/10' : 'border-gray-300 bg-stone-100 cursor-not-allowed'
+                            }`}
+                            onDragOver={(e) => { e.preventDefault(); if (referenceFiles.length < 8) setIsDraggingOver(true); }}
                             onDragLeave={() => setIsDraggingOver(false)}
                             onDrop={(e) => {
                                 e.preventDefault();
                                 setIsDraggingOver(false);
-                                handleFileChange(e.dataTransfer.files);
+                                if (referenceFiles.length < 8) handleFileChange(e.dataTransfer.files);
                             }}
                         >
                             <div className="flex flex-col items-center gap-2 text-text-secondary">
-                            <UploadIcon className="w-8 h-8" />
-                            <span>Загрузить предмет(ы) или перетащить</span>
+                                <UploadIcon className="w-8 h-8" />
+                                <span>Загрузить изображение(я) стиля ({referenceFiles.length}/8)</span>
                             </div>
                         </label>
                     </Tooltip>
-                    <input id="mix-match-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e.target.files)} disabled={isLoading} multiple/>
+                    <input id="style-apply-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e.target.files)} disabled={isLoading || referenceFiles.length >= 8} multiple/>
                 </div>
                 
                 {/* Previews */}
                 {hasFiles && (
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 p-2 bg-stone-100 rounded-lg max-h-48 overflow-y-auto border border-border-color">
-                        {itemFiles.map(item => (
+                        {referenceFiles.map(item => (
                             <div key={item.id} className="relative group aspect-square">
-                                <img src={item.preview} alt={item.file.name} className="w-full h-full object-contain rounded-md bg-stone-50" />
+                                <img src={item.preview} alt={item.file.name} className="w-full h-full object-cover rounded-md bg-stone-50" />
                                 <Tooltip side="left" text={`Удалить ${item.file.name}`}>
                                     <button
                                         type="button"
@@ -119,26 +126,14 @@ const MixPanel: React.FC<MixPanelProps> = ({ onAddLayer, isLoading }) => {
                     </div>
                 )}
                 
-                {/* Prompt Input */}
-                <Tooltip side="left" text="например, 'Надеть красную рубашку и черные солнцезащитные очки на меня'">
-                    <textarea
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        placeholder="Опишите, как скомбинировать предметы..."
-                        className="flex-grow bg-stone-50 border-2 border-border-color text-text-primary rounded-lg p-3 focus:ring-2 ring-primary focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base resize-none h-24 font-medium"
-                        disabled={isLoading}
-                        aria-label="Подсказка для комбинации Mix and match"
-                    />
-                </Tooltip>
-
                 {/* Submit Button */}
-                <Tooltip side="left" text="Скомбинировать загруженные предметы на вашей фотографии, используя вашу подсказку">
+                <Tooltip side="left" text="Перенести стиль с загруженных изображений на вашу фотографию.">
                     <button
                         type="submit"
                         className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 h-[52px]"
-                        disabled={isLoading || !hasFiles || !prompt.trim()}
+                        disabled={isLoading || !hasFiles}
                     >
-                        {isLoading ? <Spinner size="sm" /> : <><LayersIcon className="w-6 h-6"/> Добавить слой</>}
+                        {isLoading ? <Spinner size="sm"/> : <><PaintBrushIcon className="w-6 h-6"/> Применить стиль</>}
                     </button>
                 </Tooltip>
             </form>
@@ -146,4 +141,4 @@ const MixPanel: React.FC<MixPanelProps> = ({ onAddLayer, isLoading }) => {
     );
 };
 
-export default MixPanel;
+export default StylePanel;

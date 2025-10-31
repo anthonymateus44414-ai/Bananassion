@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { UploadIcon, MagicWandIcon, PaletteIcon, SunIcon, SparklesIcon } from './icons';
 import Tooltip from './Tooltip';
+import Spinner from './Spinner';
 
 interface StartScreenProps {
   onFileSelect: (files: FileList | null) => void;
@@ -33,7 +34,7 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect, onGenerateFromP
 
   const renderEditContent = () => (
     <div 
-      className={`relative mt-6 transition-all duration-300 p-8 rounded-2xl border-2 ${isDraggingOver ? 'bg-blue-500/10 border-dashed border-blue-400' : 'border-transparent'}`}
+      className={`relative mt-6 transition-all duration-300 p-8 border-2 border-dashed rounded-xl ${isDraggingOver ? 'bg-primary/10 border-primary animate-pulse' : 'border-border-color'}`}
       onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
       onDragLeave={() => setIsDraggingOver(false)}
       onDrop={(e) => {
@@ -43,40 +44,39 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect, onGenerateFromP
       }}
     >
         <div className="flex flex-col items-center gap-4">
-            <Tooltip text="Select one or more images from your device to start editing">
-                <label htmlFor="image-upload-start" className="relative inline-flex items-center justify-center px-10 py-5 text-xl font-bold text-white bg-blue-600 rounded-full cursor-pointer group hover:bg-blue-500 transition-colors">
-                    <UploadIcon className="w-6 h-6 mr-3 transition-transform duration-500 ease-in-out group-hover:rotate-[360deg] group-hover:scale-110" />
-                    Upload Image(s)
+            <Tooltip text="Выберите одно или несколько изображений с вашего устройства, чтобы начать редактирование">
+                <label htmlFor="image-upload-start" className="relative inline-flex items-center justify-center px-8 py-4 text-xl font-bold text-white bg-primary rounded-lg cursor-pointer group hover:bg-primary-hover transition-colors active:scale-[0.98] shadow-lg hover:shadow-xl">
+                    <UploadIcon className="w-7 h-7 mr-3" />
+                    Загрузить изображение(я)
                 </label>
             </Tooltip>
             <input id="image-upload-start" type="file" className="hidden" accept="image/*" onChange={handleFileChange} multiple />
-            <p className="text-sm text-gray-500">or drag and drop file(s)</p>
+            <p className="text-sm text-text-secondary font-semibold">или перетащите файл(ы)</p>
         </div>
     </div>
   );
 
   const renderGenerateContent = () => (
     <div className="mt-6 flex flex-col items-center gap-4 w-full max-w-2xl">
-        <p className="text-lg text-gray-400">Describe the image you want to create from your imagination.</p>
+        <p className="text-lg text-text-secondary font-semibold">Опишите изображение, которое вы хотите создать из своего воображения.</p>
         <form onSubmit={handleGenerateSubmit} className="w-full flex flex-col items-center gap-4">
-            <Tooltip text="Enter a detailed description of the image to generate">
+            <Tooltip text="Введите подробное описание изображения для генерации">
                 <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="e.g., A cinematic shot of a raccoon astronaut commandeering a spaceship, detailed, 4k"
-                    className="w-full bg-gray-800 border border-gray-700 text-gray-200 rounded-lg p-5 text-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition h-32 resize-none"
+                    placeholder="например, Счастливый маленький робот машет рукой, в стиле цифрового искусства..."
+                    className="w-full bg-bg-panel border-2 border-border-color text-text-primary rounded-lg p-4 text-lg focus:ring-2 ring-primary focus:outline-none transition h-32 resize-none font-medium"
                     disabled={isLoading}
-                    aria-label="Image generation prompt"
+                    aria-label="Подсказка для генерации изображения"
                 />
             </Tooltip>
-            <Tooltip text="Create a new image from your text description">
+            <Tooltip text="Создать новое изображение по вашему текстовому описанию">
                 <button 
                     type="submit"
-                    className="relative inline-flex items-center justify-center px-10 py-5 text-xl font-bold text-white bg-blue-600 rounded-full cursor-pointer group hover:bg-blue-500 transition-colors disabled:bg-blue-800 disabled:cursor-not-allowed"
+                    className="relative inline-flex items-center justify-center px-8 py-4 text-xl font-bold text-white bg-primary rounded-lg cursor-pointer group hover:bg-primary-hover transition-colors active:scale-[0.98] shadow-lg hover:shadow-xl disabled:bg-gray-400 disabled:cursor-not-allowed disabled:shadow-none h-[68px] w-56"
                     disabled={isLoading || !prompt.trim()}
                 >
-                    <SparklesIcon className="w-6 h-6 mr-3" />
-                    Generate
+                    {isLoading ? <Spinner /> : <><SparklesIcon className="w-7 h-7 mr-3" /> Создать!</>}
                 </button>
             </Tooltip>
         </form>
@@ -86,36 +86,36 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect, onGenerateFromP
   return (
     <div className="w-full max-w-5xl mx-auto text-center p-8">
       <div className="flex flex-col items-center gap-6 animate-fade-in">
-        <h1 className="text-5xl font-extrabold tracking-tight text-gray-100 sm:text-6xl md:text-7xl">
-          AI-Powered Photo Editor & <span className="text-blue-400">Creator</span>.
+        <h1 className="text-5xl md:text-6xl text-text-primary font-extrabold leading-tight">
+          AI Фоторедактор и <span className="text-primary">Создатель!</span>
         </h1>
-        <p className="max-w-3xl text-lg text-gray-400 md:text-xl">
-            Retouch photos, generate new images, apply creative filters, or make professional adjustments using simple text prompts.
+        <p className="max-w-3xl text-lg text-text-secondary md:text-xl font-semibold">
+            Ретушируйте фотографии, создавайте новые изображения, применяйте творческие фильтры или делайте профессиональные настройки, используя простые текстовые подсказки.
         </p>
 
-        <div className="w-full max-w-sm bg-gray-800/80 border border-gray-700/80 rounded-lg p-2 flex items-center justify-center gap-2 backdrop-blur-sm mt-6">
-            <Tooltip text="Switch to Photo Editing mode">
+        <div className="w-full max-w-sm bg-gray-100 border border-border-color rounded-lg p-1 flex items-center justify-center gap-1 mt-6">
+            <Tooltip text="Переключиться в режим редактирования фото">
                 <button
                     onClick={() => setActiveTab('edit')}
-                    className={`w-full font-semibold py-3 px-5 rounded-md transition-all duration-200 text-base ${
+                    className={`w-full font-bold py-2.5 px-5 transition-all duration-200 text-lg rounded-md ${
                         activeTab === 'edit' 
-                        ? 'bg-gradient-to-br from-blue-500 to-cyan-400 text-white shadow-lg shadow-cyan-500/40' 
-                        : 'text-gray-300 hover:text-white hover:bg-white/10'
+                        ? 'bg-primary text-white shadow-sm' 
+                        : 'text-text-secondary hover:text-text-primary bg-transparent'
                     }`}
                 >
-                    Edit Photo
+                    Редактировать фото
                 </button>
             </Tooltip>
-            <Tooltip text="Switch to Image Generation mode">
+            <Tooltip text="Переключиться в режим генерации изображений">
                 <button
                     onClick={() => setActiveTab('generate')}
-                    className={`w-full font-semibold py-3 px-5 rounded-md transition-all duration-200 text-base ${
+                    className={`w-full font-bold py-2.5 px-5 transition-all duration-200 text-lg rounded-md ${
                         activeTab === 'generate' 
-                        ? 'bg-gradient-to-br from-blue-500 to-cyan-400 text-white shadow-lg shadow-cyan-500/40' 
-                        : 'text-gray-300 hover:text-white hover:bg-white/10'
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary bg-transparent'
                     }`}
                 >
-                    Generate Image
+                    Создать изображение
                 </button>
             </Tooltip>
         </div>
@@ -124,26 +124,26 @@ const StartScreen: React.FC<StartScreenProps> = ({ onFileSelect, onGenerateFromP
 
         <div className="mt-16 w-full">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div className="bg-black/20 p-6 rounded-lg border border-gray-700/50 flex flex-col items-center text-center">
-                    <div className="flex items-center justify-center w-12 h-12 bg-gray-700 rounded-full mb-4">
-                       <MagicWandIcon className="w-6 h-6 text-blue-400" />
+                <div className="bg-bg-panel p-6 rounded-xl shadow-lg flex flex-col items-center text-center border border-border-color">
+                    <div className="flex items-center justify-center w-16 h-16 bg-blue-100 text-primary rounded-full mb-4">
+                       <MagicWandIcon className="w-8 h-8" />
                     </div>
-                    <h3 className="text-xl font-bold text-gray-100">Precise Retouching</h3>
-                    <p className="mt-2 text-gray-400">Click any point on your image to remove blemishes, change colors, or add elements with pinpoint accuracy.</p>
+                    <h3 className="text-xl font-bold text-text-primary">Точная ретушь</h3>
+                    <p className="mt-2 text-text-secondary font-medium">Кликните в любую точку на изображении, чтобы удалить, изменить цвета или добавить элементы с высокой точностью.</p>
                 </div>
-                <div className="bg-black/20 p-6 rounded-lg border border-gray-700/50 flex flex-col items-center text-center">
-                    <div className="flex items-center justify-center w-12 h-12 bg-gray-700 rounded-full mb-4">
-                       <PaletteIcon className="w-6 h-6 text-blue-400" />
+                <div className="bg-bg-panel p-6 rounded-xl shadow-lg flex flex-col items-center text-center border border-border-color">
+                    <div className="flex items-center justify-center w-16 h-16 bg-blue-100 text-primary rounded-full mb-4">
+                       <PaletteIcon className="w-8 h-8" />
                     </div>
-                    <h3 className="text-xl font-bold text-gray-100">Creative Filters</h3>
-                    <p className="mt-2 text-gray-400">Transform photos with artistic styles. From vintage looks to futuristic glows, find or create the perfect filter.</p>
+                    <h3 className="text-xl font-bold text-text-primary">Творческие фильтры</h3>
+                    <p className="mt-2 text-text-secondary font-medium">Преобразуйте фотографии с помощью художественных стилей. От винтажных до футуристических, найдите или создайте идеальный фильтр.</p>
                 </div>
-                <div className="bg-black/20 p-6 rounded-lg border border-gray-700/50 flex flex-col items-center text-center">
-                    <div className="flex items-center justify-center w-12 h-12 bg-gray-700 rounded-full mb-4">
-                       <SunIcon className="w-6 h-6 text-blue-400" />
+                <div className="bg-bg-panel p-6 rounded-xl shadow-lg flex flex-col items-center text-center border border-border-color">
+                    <div className="flex items-center justify-center w-16 h-16 bg-blue-100 text-primary rounded-full mb-4">
+                       <SunIcon className="w-8 h-8" />
                     </div>
-                    <h3 className="text-xl font-bold text-gray-100">Pro Adjustments</h3>
-                    <p className="mt-2 text-gray-400">Enhance lighting, blur backgrounds, or change the mood. Get studio-quality results without complex tools.</p>
+                    <h3 className="text-xl font-bold text-text-primary">Про-настройки</h3>
+                    <p className="mt-2 text-text-secondary font-medium">Улучшайте освещение, размывайте фон или меняйте настроение. Получайте результаты студийного качества без сложных инструментов.</p>
                 </div>
             </div>
         </div>

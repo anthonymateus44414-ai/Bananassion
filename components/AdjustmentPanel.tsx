@@ -5,24 +5,38 @@
 
 import React, { useState } from 'react';
 import Tooltip from './Tooltip';
-import { Tool } from '../types';
+import { Tool, Layer } from '../types';
+import Spinner from './Spinner';
 
-interface AdjustmentPanelProps {
-  onApplyAdjustment: (prompt: string) => void;
-  isLoading: boolean;
-  mode?: 'interactive' | 'recipe';
-  onAddToRecipe?: (step: { name: string; tool: Tool; params: { prompt: string } }) => void;
+interface RecipeStep {
+  id: string;
+  name: string;
+  tool: Tool;
+  params: any;
 }
 
-const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({ onApplyAdjustment, isLoading, mode = 'interactive', onAddToRecipe }) => {
+interface AdjustmentPanelProps {
+  onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible'>) => void;
+  isLoading: boolean;
+  onAddToRecipe?: (step: Omit<RecipeStep, 'id'>) => void;
+  mode?: 'layer' | 'recipe';
+}
+
+const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({ onAddLayer, isLoading, onAddToRecipe, mode = 'layer' }) => {
   const [selectedPresetPrompt, setSelectedPresetPrompt] = useState<string | null>(null);
   const [customPrompt, setCustomPrompt] = useState('');
 
   const presets = [
-    { name: 'Blur Background', prompt: 'Apply a realistic depth-of-field effect, making the background blurry while keeping the main subject in sharp focus.' },
-    { name: 'Enhance Details', prompt: 'Slightly enhance the sharpness and details of the image without making it look unnatural.' },
-    { name: 'Warmer Lighting', prompt: 'Adjust the color temperature to give the image warmer, golden-hour style lighting.' },
-    { name: 'Studio Light', prompt: 'Add dramatic, professional studio lighting to the main subject.' },
+    { name: 'Размыть фон', prompt: 'Примените реалистичный эффект глубины резкости, сделав фон размытым, при этом сохраняя главный объект в фокусе.' },
+    { name: 'Усилить детали', prompt: 'Немного увеличьте резкость и детализацию изображения, не делая его неестественным.' },
+    { name: 'Сделать светлее', prompt: 'Слегка осветлите изображение в целом, чтобы оно выглядело более ярким и хорошо освещенным, сохраняя при этом естественные цвета.' },
+    { name: 'Увеличить контраст', prompt: 'Увеличьте контраст, чтобы изображение стало более выразительным и динамичным, не теряя деталей в тенях и светах.' },
+    { name: 'Усилить насыщенность', prompt: 'Умеренно увеличьте насыщенность цветов по всему изображению, чтобы сделать цвета богаче и ярче, но избегайте неестественного вида.' },
+    { name: 'Теплое освещение', prompt: 'Отрегулируйте цветовую температуру, чтобы придать изображению более теплое освещение в стиле "золотого часа".' },
+    { name: 'Холодные тона', prompt: 'Отрегулируйте цветовой баланс, чтобы придать изображению более холодный, кинематографичный вид с акцентом на синие и голубые тона.' },
+    { name: 'Студийный свет', prompt: 'Добавьте драматическое, профессиональное студийное освещение на главный объект.' },
+    { name: 'Эффект HDR', prompt: 'Примените к изображению эффект высокого динамического диапазона (HDR), улучшая детализацию как в тенях, так и в светах для более драматичного и яркого вида.' },
+    { name: 'Убрать дымку', prompt: 'Удалите дымку или туман с изображения, увеличив четкость и контраст для более резкого вида.' },
   ];
 
   const activePrompt = selectedPresetPrompt || customPrompt;
@@ -39,33 +53,41 @@ const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({ onApplyAdjustment, is
 
   const handleApply = () => {
     if (activePrompt) {
-        if (mode === 'interactive') {
-            onApplyAdjustment(activePrompt);
-        } else if (onAddToRecipe) {
-            const selectedPreset = presets.find(p => p.prompt === selectedPresetPrompt);
-            const stepName = selectedPreset?.name || `Custom: ${activePrompt.slice(0, 15)}...`;
-            onAddToRecipe({
-                name: `Adjust: ${stepName}`,
-                tool: 'adjust',
-                params: { prompt: activePrompt }
-            });
-            setSelectedPresetPrompt(null);
-            setCustomPrompt('');
+        const selectedPreset = presets.find(p => p.prompt === selectedPresetPrompt);
+        const name = selectedPreset?.name || `Custom: ${activePrompt.slice(0, 15)}...`;
+        const stepName = `Коррекция: ${name}`;
+
+        if (mode === 'recipe' && onAddToRecipe) {
+          onAddToRecipe({
+            name: stepName,
+            tool: 'adjust',
+            params: { prompt: activePrompt }
+          });
+        } else {
+          onAddLayer({
+              name: stepName,
+              tool: 'adjust',
+              params: { prompt: activePrompt }
+          });
         }
+        setSelectedPresetPrompt(null);
+        setCustomPrompt('');
     }
   };
 
+  const buttonText = mode === 'recipe' ? 'Добавить в рецепт' : 'Добавить слой';
+
   return (
-    <div className="w-full bg-gray-800/50 border border-gray-700 rounded-lg p-4 flex flex-col gap-4 animate-fade-in backdrop-blur-sm">
-      <h3 className="text-lg font-semibold text-center text-gray-300">Apply a Professional Adjustment</h3>
+    <div className="w-full bg-bg-panel rounded-2xl shadow-lg p-4 flex flex-col gap-4 animate-fade-in">
+      <h3 className="text-xl font-bold text-center text-text-primary">Коррекция</h3>
       
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         {presets.map(preset => (
-          <Tooltip key={preset.name} text={preset.prompt}>
+          <Tooltip side="left" key={preset.name} text={preset.prompt}>
             <button
               onClick={() => handlePresetClick(preset.prompt)}
               disabled={isLoading}
-              className={`w-full text-center bg-white/10 border border-transparent text-gray-200 font-semibold py-3 px-4 rounded-md transition-all duration-200 ease-in-out hover:bg-white/20 hover:border-white/20 active:scale-95 text-base disabled:opacity-50 disabled:cursor-not-allowed ${selectedPresetPrompt === preset.prompt ? 'ring-2 ring-offset-2 ring-offset-gray-800 ring-blue-500' : ''}`}
+              className={`w-full text-center font-bold py-3 px-2 border rounded-lg transition-all duration-200 ease-in-out active:scale-[0.98] text-sm disabled:opacity-50 disabled:cursor-not-allowed ${selectedPresetPrompt === preset.prompt ? 'bg-primary text-white border-transparent' : 'bg-gray-50 text-text-primary border-border-color hover:bg-gray-100 hover:border-gray-400'}`}
             >
               {preset.name}
             </button>
@@ -73,26 +95,26 @@ const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({ onApplyAdjustment, is
         ))}
       </div>
 
-      <Tooltip text="Describe any adjustment, e.g., 'Make the lighting more dramatic'">
+      <Tooltip side="left" text="Опишите любую коррекцию, например, 'сделать освещение более драматичным'">
         <input
           type="text"
           value={customPrompt}
           onChange={handleCustomChange}
-          placeholder="Or describe an adjustment (e.g., 'change background to a forest')"
-          className="flex-grow bg-gray-800 border border-gray-600 text-gray-200 rounded-lg p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base"
+          placeholder="Или опишите коррекцию..."
+          className="flex-grow bg-gray-50 border-2 border-border-color text-text-primary rounded-lg p-3 focus:ring-2 ring-primary focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base font-medium"
           disabled={isLoading}
         />
       </Tooltip>
 
       {activePrompt && (
         <div className="animate-fade-in flex flex-col gap-4 pt-2">
-            <Tooltip text={mode === 'interactive' ? "Apply the selected adjustment" : "Add this adjustment to the recipe"}>
+            <Tooltip side="left" text={`Применить выбранную коррекцию как новый ${mode === 'recipe' ? 'шаг рецепта' : 'слой'}`}>
               <button
                   onClick={handleApply}
-                  className="w-full bg-gradient-to-br from-blue-600 to-blue-500 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/40 hover:-translate-y-px active:scale-95 active:shadow-inner text-base disabled:from-blue-800 disabled:to-blue-700 disabled:shadow-none disabled:cursor-not-allowed disabled:transform-none"
+                  className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center h-[52px]"
                   disabled={isLoading || !activePrompt.trim()}
               >
-                  {mode === 'interactive' ? 'Apply Adjustment' : 'Add to Recipe'}
+                  {isLoading ? <Spinner size="sm" /> : buttonText}
               </button>
             </Tooltip>
         </div>
