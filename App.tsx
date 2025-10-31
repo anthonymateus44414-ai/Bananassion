@@ -38,7 +38,12 @@ type LayerAction =
     | { type: 'CLEAR_VISIBLE_CACHE' }
     | { type: 'UPDATE_LAYER_TRANSFORM'; payload: { layerId: string; transform: Layer['transform'] } };
 
-type HistoryAction = LayerAction | { type: 'UNDO' } | { type: 'REDO' } | { type: 'SET_HISTORY'; payload: HistoryState };
+type HistoryAction = 
+    | LayerAction 
+    | { type: 'UNDO' } 
+    | { type: 'REDO' } 
+    | { type: 'SET_HISTORY'; payload: HistoryState }
+    | { type: 'JUMP_TO_STATE'; payload: { index: number } };
 
 const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
     switch (action.type) {
@@ -159,6 +164,24 @@ const historyReducer = (state: HistoryState, action: HistoryAction): HistoryStat
         case 'SET_HISTORY': {
             return action.payload;
         }
+        case 'JUMP_TO_STATE': {
+            const { index } = action.payload;
+            const allStates = [...past, present, ...future];
+
+            if (index < 0 || index >= allStates.length) {
+                return state; // Invalid index
+            }
+
+            const newPresent = allStates[index];
+            const newPast = allStates.slice(0, index);
+            const newFuture = allStates.slice(index + 1);
+
+            return {
+                past: newPast,
+                present: newPresent,
+                future: newFuture,
+            };
+        }
         case 'UPDATE_CACHED_RESULT': {
             const newPresent = layersReducer(present, action);
             return { ...state, present: newPresent };
@@ -213,16 +236,9 @@ const App: React.FC = () => {
     const [brushShape, setBrushShape] = useState<BrushShape>('circle');
     const [brushHardness, setBrushHardness] = useState(1.0);
     const [maskPreviewOpacity, setMaskPreviewOpacity] = useState(0.5);
-    const [isFindingObjects, setIsFindingObjects] = useState(false);
-    const [detectedObjects, setDetectedObjects] = useState<DetectedObject[] | null>(null);
-    const [selectedObjectMasks, setSelectedObjectMasks] = useState<string[]>([]);
     const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
     
     // UI state
-
-    // CSS Inspector State
-    const [isInspecting, setIsInspecting] = useState(false);
-    const [inspectionResult, setInspectionResult] = useState<{ name: string; mask: string | null; css: object | null; error: string | null; } | null>(null);
 
     // Transcription & Voice Command State
     const [transcriptionStatus, setTranscriptionStatus] = useState<'idle' | 'recording' | 'transcribing' | 'done' | 'error'>('idle');
@@ -293,8 +309,6 @@ const App: React.FC = () => {
             case 'adjust': return geminiService.generateAdjustedImage(inputFile, params.prompt);
             case 'retouch': return geminiService.generateEditedImage(inputFile, params.prompt, dataURLtoFile(params.mask, 'mask.png'));
             case 'textEdit': return geminiService.generateTextEdit(inputFile, params.prompt);
-            case 'magicEraser': return geminiService.generateInpaintedImage(inputFile, dataURLtoFile(params.mask, 'mask.png'), params.fillPrompt);
-            case 'facial': return geminiService.generateFacialEnhancement(inputFile, params.prompt, dataURLtoFile(params.mask, 'mask.png'));
             case 'faceSwap': {
                 const targetImageFile = await dataURLtoFile(params.targetImageDataUrl, 'target-face-swap.png');
                 const maskFile = await dataURLtoFile(params.targetFaceMaskDataUrl, 'target-face-mask.png');
@@ -332,10 +346,6 @@ const App: React.FC = () => {
                 if (params.direction) return geminiService.generateExpandedImage(inputFile, params.direction, params.percentage);
                 return geminiService.generateUncroppedImage(inputFile, params.percentage);
             case 'camera': return geminiService.generateNewAngleImage(inputFile, params.prompt);
-            case 'mix': {
-                const itemFiles = await Promise.all(params.itemDataUrls.map((url: string, i: number) => dataURLtoFile(url, `item-${i}.png`)));
-                return geminiService.generateMixedImage(inputFile, itemFiles, params.prompt);
-            }
             case 'style': {
                 const referenceImages = await Promise.all(params.referenceImages.map((url: string, i: number) => dataURLtoFile(url, `style-ref-${i}.png`)));
                 return geminiService.generateStyledImage(inputFile, referenceImages);
@@ -419,8 +429,6 @@ const App: React.FC = () => {
         setIsMasking(false);
         setMaskDataUrl(null);
         setStageState({ scale: 1, x: 0, y: 0 });
-        setDetectedObjects(null);
-        setSelectedObjectMasks([]);
         setSelectedLayerId(null);
     }, [dispatch]);
 
@@ -442,6 +450,14 @@ const App: React.FC = () => {
         setIsMasking(false);
         setMaskDataUrl(null);
         setVoiceCommandFeedback('Действие: Последнее изменение повторено.');
+    }, [dispatch]);
+    
+    const handleJumpToState = useCallback((index: number) => {
+        dispatch({ type: 'JUMP_TO_STATE', payload: { index } });
+        setEditHotspot(null);
+        setIsMasking(false);
+        setMaskDataUrl(null);
+        setVoiceCommandFeedback(`Действие: История возвращена к состоянию ${index}.`);
     }, [dispatch]);
     
     const handleStartOver = useCallback(() => {
@@ -532,15 +548,11 @@ const App: React.FC = () => {
             'ретушь': { tool: 'retouch', name: 'Ретушь' },
             'текстовая правка': { tool: 'textEdit', name: 'Текстовая правка' },
             'редактировать текст': { tool: 'textEdit', name: 'Текстовая правка' },
-            'ластик': { tool: 'magicEraser', name: 'Волшебный ластик' },
-            'лицо': { tool: 'facial', name: 'Лицо' },
             'замена лица': { tool: 'faceSwap', name: 'Замена лица' },
             'фон': { tool: 'background', name: 'Фон' },
             'одежда': { tool: 'clothing', name: 'Одежда' },
-            'комбинировать': { tool: 'mix', name: 'Комбинирование' },
             'добавить человека': { tool: 'addPerson', name: 'Добавление человека' },
             'добавить объект': { tool: 'addObject', name: 'Добавление объекта' },
-            'добавить изображение': { tool: 'image', name: 'Добавление изображения' },
         };
     
         let toolSwitched = false;
@@ -746,12 +758,6 @@ const App: React.FC = () => {
         setMaskDataUrl(null);
     }, []);
 
-    const handleClearObjects = useCallback(() => {
-        setDetectedObjects(null);
-        setSelectedObjectMasks([]);
-        setMaskDataUrl(null);
-    }, []);
-
     const handleToolSelect = useCallback((tool: Tool) => {
         // Deactivate all interactive modes when switching tools to prevent
         // state from one tool interfering with another.
@@ -760,14 +766,9 @@ const App: React.FC = () => {
         setEditHotspot(null);
         setSelectedLayerId(null);
     
-        // Clear data related to object selection unless switching to the magic eraser tool.
-        if (tool !== 'magicEraser') {
-            handleClearObjects();
-        }
-    
         // Activate the new tool and its specific mode.
         setActiveTool(tool);
-    }, [handleClearObjects]);
+    }, []);
     
     const handleFileSelect = (files: FileList | null) => {
         if (files && files.length > 0) {
@@ -783,8 +784,6 @@ const App: React.FC = () => {
         setMaskDataUrl(null);
         setIsMasking(false);
         setEditHotspot(null);
-        setDetectedObjects(null);
-        setSelectedObjectMasks([]);
     }, [dispatch]);
     
     const handleUpdateLayerTransform = useCallback((layerId: string, newTransform: Layer['transform']) => {
@@ -811,27 +810,6 @@ const App: React.FC = () => {
             setIsLoading(false);
         }
     };
-    
-    const handleFindObjects = useCallback(async () => {
-        if (!baseImage || isFindingObjects) return;
-        setIsFindingObjects(true);
-        setError(null);
-        setDetectedObjects(null);
-        try {
-            const objects = await geminiService.detectAndSegmentObjects(baseImage);
-            setDetectedObjects(objects);
-        } catch (err: any) {
-            setError(err.message);
-        } finally {
-            setIsFindingObjects(false);
-        }
-    }, [baseImage, isFindingObjects]);
-
-    const handleObjectMaskToggle = useCallback((maskUrl: string) => {
-        setSelectedObjectMasks(prev => prev.includes(maskUrl) ? prev.filter(m => m !== maskUrl) : [...prev, maskUrl]);
-    }, []);
-
-    const handleConfirmSelection = useCallback(() => setDetectedObjects(null), []);
     
     const handleSaveProject = useCallback(async () => {
         if (!baseImage) {
@@ -915,25 +893,6 @@ const App: React.FC = () => {
         reader.readAsText(file);
     }, [resetState]);
     
-    const handleInspectElement = useCallback(async (point: Hotspot) => {
-        if (!baseImage || isInspecting) return;
-        setIsInspecting(true);
-        setInspectionResult(null);
-        setError(null);
-        try {
-            const result = await geminiService.getCssForElement(baseImage, point);
-            setInspectionResult({ ...result, error: null });
-        } catch (err: any) {
-            setInspectionResult({ name: '', mask: null, css: null, error: err.message });
-        } finally {
-            setIsInspecting(false);
-        }
-    }, [baseImage, isInspecting]);
-
-    const handleClearInspection = useCallback(() => {
-        setInspectionResult(null);
-    }, []);
-
     const selectedLayer = useMemo(() => {
         if (!selectedLayerId) return null;
         return history.present.find(l => l.id === selectedLayerId) || null;
@@ -982,15 +941,15 @@ const App: React.FC = () => {
                         brushShape={brushShape}
                         brushHardness={brushHardness}
                         maskPreviewOpacity={maskPreviewOpacity}
-                        detectedObjects={detectedObjects}
-                        selectedObjectMasks={selectedObjectMasks}
+                        detectedObjects={null}
+                        selectedObjectMasks={[]}
 // FIX: Pass the 'handleObjectMaskToggle' function to the 'onObjectMaskToggle' prop.
-                        onObjectMaskToggle={handleObjectMaskToggle}
+                        onObjectMaskToggle={() => {}}
                         selectedLayerId={selectedLayerId}
                         onSelectLayer={setSelectedLayerId}
                         onUpdateLayerTransform={handleUpdateLayerTransform}
-                        onInspectElement={handleInspectElement}
-                        inspectedElementMask={inspectionResult?.mask ?? null}
+                        onInspectElement={() => {}}
+                        inspectedElementMask={null}
                     />
                 </div>
 
@@ -999,13 +958,13 @@ const App: React.FC = () => {
                     activeTool={activeTool}
                     isLoading={isLoading}
                     loadingMessage={isLoading ? loadingMessage : ''}
-                    isFindingObjects={isFindingObjects}
+                    isFindingObjects={false}
                     layers={history.present}
                     maskDataUrl={maskDataUrl}
                     editHotspot={editHotspot}
-                    detectedObjects={detectedObjects}
-                    selectedObjectMasks={selectedObjectMasks}
-                    hasUndo={history.past.length > 0}
+                    detectedObjects={null}
+                    selectedObjectMasks={[]}
+                    history={history}
                     hasRedo={history.future.length > 0}
                     isRecording={transcriptionStatus === 'recording'}
                     transcriptionStatus={transcriptionStatus}
@@ -1017,17 +976,17 @@ const App: React.FC = () => {
                     brushHardness={brushHardness}
                     maskPreviewOpacity={maskPreviewOpacity}
                     selectedLayer={selectedLayer}
-                    isInspecting={isInspecting}
-                    inspectionResult={inspectionResult}
+                    isInspecting={false}
+                    inspectionResult={null}
                     // Handlers
                     onAddLayer={handleAddLayer}
                     onToggleMasking={handleToggleMasking}
-                    onFindObjects={handleFindObjects}
+                    onFindObjects={() => {}}
 // FIX: Pass the 'handleObjectMaskToggle' function to the 'onObjectMaskToggle' prop.
-                    onObjectMaskToggle={handleObjectMaskToggle}
+                    onObjectMaskToggle={() => {}}
                     onSetMaskDataUrl={setMaskDataUrl}
-                    onClearObjects={handleClearObjects}
-                    onConfirmSelection={handleConfirmSelection}
+                    onClearObjects={() => {}}
+                    onConfirmSelection={() => {}}
                     onReorderLayers={handleReorderLayers}
                     onToggleVisibility={handleToggleVisibility}
                     onRemoveLayer={handleRemoveLayer}
@@ -1037,6 +996,7 @@ const App: React.FC = () => {
                     onClearCache={handleClearCache}
                     onUndo={handleUndo}
                     onRedo={handleRedo}
+                    onJumpToState={handleJumpToState}
                     onStartRecording={handleStartRecording}
                     onStopRecording={handleStopRecording}
                     onBrushSizeChange={setBrushSize}
@@ -1046,7 +1006,7 @@ const App: React.FC = () => {
                     onConfirmMasking={handleConfirmMasking}
                     onCancelMasking={handleCancelMasking}
                     onUpdateLayerTransform={handleUpdateLayerTransform}
-                    onClearInspection={handleClearInspection}
+                    onClearInspection={() => {}}
                 />
             </main>
              {isLoading && baseImage && (

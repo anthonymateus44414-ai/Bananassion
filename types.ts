@@ -11,17 +11,20 @@ export type Tool =
   | 'enhance'
   | 'retouch'
   | 'textEdit'
-  | 'magicEraser'
-  | 'facial'
   | 'faceSwap' // New: for swapping faces
   | 'background'
   | 'clothing'
-  | 'mix'
   | 'addPerson'
   | 'addObject'
   | 'transcribe'
-  | 'image' // New: for adding transformable image layers
-  | 'cssInspector'; // New: for suggesting CSS
+  // FIX: Add missing tool types to resolve multiple comparison and assignment errors across the application.
+  | 'image'
+  | 'transform'
+  | 'filter'
+  | 'color'
+  | 'facial'
+  | 'mix'
+  | 'magicEraser';
 
 export interface Layer {
   id: string;

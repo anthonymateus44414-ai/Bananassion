@@ -450,9 +450,7 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
             y: (relativeY / displayedImageSize.height) * 100
         };
 
-        if (activeTool === 'cssInspector') {
-            onInspectElement(point);
-        } else if (['addObject', 'enhance'].includes(activeTool)) {
+        if (['addObject', 'enhance'].includes(activeTool)) {
             onHotspot(point);
         }
     };
@@ -485,7 +483,7 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
         if (detectedObjects) return 'default';
         if (activeTool === 'transform') return 'default';
         if (isMasking) return 'crosshair';
-        if (['addObject', 'enhance', 'cssInspector'].includes(activeTool)) return 'pointer';
+        if (['addObject', 'enhance'].includes(activeTool)) return 'pointer';
         return 'grab';
     }, [isMasking, activeTool, detectedObjects]);
 

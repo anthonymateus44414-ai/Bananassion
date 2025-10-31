@@ -330,38 +330,6 @@ export const generateInpaintedImage = async (
 };
 
 /**
- * Generates a facial enhancement using generative AI based on a text prompt and a mask.
- * @param originalImage The original image file.
- * @param userPrompt The text prompt describing the desired enhancement.
- * @param maskImage The mask image file where white indicates the area to edit.
- * @returns A promise that resolves to the data URL of the edited image.
- */
-export const generateFacialEnhancement = async (
-    originalImage: File,
-    userPrompt: string,
-    maskImage: File
-): Promise<string> => {
-    return executeApiCall('facial enhancement', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-        const originalImagePart = await fileToPart(originalImage);
-        const maskImagePart = await fileToPart(maskImage);
-
-        const prompt = `You are given an image and a mask for a facial enhancement. Perform this enhancement: "${userPrompt}". Apply the change ONLY to the white areas of the mask. The enhancement must be subtle and photorealistic, preserving the person's identity and blending perfectly. Output only the final image.`;
-        const textPart = { text: prompt };
-        
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts: [textPart, originalImagePart, maskImagePart] },
-            config: {
-                responseModalities: [Modality.IMAGE],
-            },
-        });
-        
-        return handleApiResponse(response, 'facial enhancement');
-    });
-};
-
-/**
  * Swaps a face in a target image with a face from reference images.
  * @param targetImage The image where the face will be swapped.
  * @param referenceFaceImages An array of images of the new face.
@@ -619,39 +587,6 @@ export const generateClothingChange = async (
         });
         
         return handleApiResponse(response, 'clothing change');
-    });
-};
-
-/**
- * Mixes multiple clothing/accessory items onto a person in an image.
- * @param originalImage The image of the person.
- * @param itemImages An array of files for the items to add.
- * @param prompt A prompt describing how to combine the items.
- * @returns A promise that resolves to the data URL of the edited image.
- */
-export const generateMixedImage = async (
-    originalImage: File,
-    itemImages: File[],
-    prompt: string,
-): Promise<string> => {
-    return executeApiCall('mix & match', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-        const originalImagePart = await fileToPart(originalImage);
-        const itemImageParts = await Promise.all(itemImages.map(file => fileToPart(file)));
-
-        const fullPrompt = `You are an expert virtual stylist. The primary image contains a person. The subsequent images contain various clothing or accessory items. Your task is to place these items onto the person according to the instruction: "${prompt}". The items must fit the person's body realistically, with correct layering, lighting, and perspective. Do not change the person or the background. Output only the final image.`;
-        const textPart = { text: fullPrompt };
-        const allParts = [textPart, originalImagePart, ...itemImageParts];
-
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts: allParts },
-            config: {
-                responseModalities: [Modality.IMAGE],
-            },
-        });
-        
-        return handleApiResponse(response, 'mix & match');
     });
 };
 
@@ -948,70 +883,6 @@ Example output: "A moody, high-contrast black and white film noir style with dee
 };
 
 /**
- * Detects and segments objects in an image.
- * @param originalImage The image to analyze.
- * @returns A promise that resolves to an array of detected objects with their names and masks.
- */
-export const detectAndSegmentObjects = async (
-    originalImage: File,
-): Promise<DetectedObject[]> => {
-    return executeApiCall('object detection', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-        const originalImagePart = await fileToPart(originalImage);
-        const prompt = `You are a highly advanced image segmentation model. Your task is to analyze the provided image and identify the 5-7 most prominent and distinct objects or subjects. For each identified object, you must:
-1.  Provide a short, descriptive "name" for the object (e.g., "blue car", "woman in red dress", "background sky").
-2.  Generate a precise, pixel-perfect segmentation "mask". The mask must be a PNG image of the exact same dimensions as the original input image. The mask should be white (#FFFFFF) for every pixel belonging to the object and black (#000000) for all other pixels.
-3.  Encode this PNG mask image into a Base64 string.
-
-Return a JSON object containing a single key "objects", which is an array of the identified objects. Do not include any other text or markdown in your response.`;
-        const textPart = { text: prompt };
-
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [textPart, originalImagePart] },
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        objects: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    name: { type: Type.STRING },
-                                    mask: { type: Type.STRING }
-                                },
-                                required: ["name", "mask"]
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        let result;
-        try {
-            const jsonStr = response.text.trim();
-            const cleanedJsonStr = jsonStr.replace(/^```json\s*|```$/g, '');
-            result = JSON.parse(cleanedJsonStr);
-        } catch (parseError) {
-            console.error('Failed to parse JSON response from AI for object detection:', { responseText: response.text, parseError });
-            throw new Error("The AI returned an invalid response. Please try again.");
-        }
-
-        if (result && Array.isArray(result.objects)) {
-            return result.objects.map((obj: any) => ({
-                name: obj.name,
-                mask: `data:image/png;base64,${obj.mask}`
-            }));
-        }
-        
-        throw new Error("AI response was not in the expected format for object detection.");
-    });
-};
-
-/**
  * Detects and segments faces in an image.
  * @param originalImage The image to analyze.
  * @returns A promise that resolves to an array of detected faces with their masks.
@@ -1125,65 +996,5 @@ Example Output:
             throw new Error("AI response was not a valid array.");
         }
         return suggestions.slice(0, 3); // Max 3 suggestions
-    });
-};
-
-/**
- * Gets CSS suggestions for a specific element in an image.
- * @param originalImage The image to analyze.
- * @param hotspot The coordinate point of the element to inspect.
- * @returns A promise that resolves to an object with the element's name, mask, and CSS styles.
- */
-export const getCssForElement = async (
-    originalImage: File,
-    hotspot: Hotspot
-): Promise<{ name: string; mask: string; css: object; }> => {
-    return executeApiCall('css inspection', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-        const originalImagePart = await fileToPart(originalImage);
-        const prompt = `You are an expert front-end developer AI. You are given an image and a coordinate point. Your task is to identify the UI element at that point (approximately ${hotspot.x.toFixed(1)}% from the left and ${hotspot.y.toFixed(1)}% from the top).
-1. Provide a short, descriptive "name" for the element (e.g., "primary-button", "product-image"). Use kebab-case.
-2. Generate a precise segmentation "mask" for this element. The mask must be a PNG image of the exact same dimensions as the original input image. The mask should be white for the element and black for everything else. Encode this mask into a Base64 string.
-3. Generate a JSON object of suggested CSS styles for this element. Include properties like backgroundColor, color, fontSize, padding, borderRadius, boxShadow, etc. Use camelCase for CSS property names.
-
-Respond ONLY with a valid JSON object.`;
-        const textPart = { text: prompt };
-
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [textPart, originalImagePart] },
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        name: { type: Type.STRING },
-                        mask: { type: Type.STRING },
-                        css: { type: Type.OBJECT }
-                    },
-                    required: ["name", "mask", "css"]
-                }
-            }
-        });
-
-        let result;
-        try {
-            const jsonStr = response.text.trim();
-            const cleanedJsonStr = jsonStr.replace(/^```json\s*|```$/g, '');
-            result = JSON.parse(cleanedJsonStr);
-        } catch (parseError) {
-            console.error('Failed to parse JSON response from AI for CSS inspection:', { responseText: response.text, parseError });
-            throw new Error("The AI returned an invalid response. Please try again.");
-        }
-
-        if (result && result.name && result.mask && result.css) {
-             return {
-                name: result.name,
-                mask: `data:image/png;base64,${result.mask}`,
-                css: result.css
-            };
-        }
-        
-        throw new Error("AI response was not in the expected format for CSS inspection.");
     });
 };
