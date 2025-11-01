@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
-import { Stage, Layer as KonvaLayer, Image as KonvaImage, Rect, Transformer, Line, Circle } from 'react-konva';
+import { Stage, Layer as KonvaLayer, Image as KonvaImage, Rect, Line, Circle } from 'react-konva';
 import useImage from 'use-image';
 import { Layer, Hotspot, Tool, BrushShape, DetectedObject } from '../types';
 import Konva from 'konva';
@@ -29,89 +29,8 @@ interface EditorCanvasProps {
     detectedObjects: DetectedObject[] | null;
     selectedObjectMasks: string[];
     onObjectMaskToggle: (maskUrl: string) => void;
-    selectedLayerId: string | null;
-    onSelectLayer: (layerId: string | null) => void;
-    onUpdateLayerTransform: (layerId: string, newTransform: Layer['transform']) => void;
-    onInspectElement: (point: { x: number; y: number }) => void;
-    inspectedElementMask: string | null;
+    isObjectSelectionMode: boolean;
 }
-
-const TransformableImage: React.FC<{
-    layer: Layer;
-    isSelected: boolean;
-    onSelect: () => void;
-    onTransform: (newAttrs: any) => void;
-    onDragEnd: (newAttrs: any) => void;
-}> = ({ layer, isSelected, onSelect, onTransform, onDragEnd }) => {
-    const shapeRef = useRef<Konva.Image>(null);
-    const trRef = useRef<Konva.Transformer>(null);
-    const [image] = useImage(layer.params.imageDataUrl);
-
-    useEffect(() => {
-        if (isSelected && trRef.current && shapeRef.current) {
-            trRef.current.nodes([shapeRef.current]);
-            trRef.current.getLayer()?.batchDraw();
-        }
-    }, [isSelected]);
-    
-    if (!layer.transform) return null;
-
-    return (
-        <React.Fragment>
-            <KonvaImage
-                ref={shapeRef}
-                image={image}
-                onClick={onSelect}
-                onTap={onSelect}
-                draggable
-                x={layer.transform.x}
-                y={layer.transform.y}
-                width={layer.transform.width}
-                height={layer.transform.height}
-                rotation={layer.transform.rotation}
-                onDragEnd={(e) => {
-                    onDragEnd({
-                        x: e.target.x(),
-                        y: e.target.y(),
-                    });
-                }}
-                onTransformEnd={() => {
-                    const node = shapeRef.current;
-                    if (node) {
-                        const scaleX = node.scaleX();
-                        const scaleY = node.scaleY();
-                        node.scaleX(1);
-                        node.scaleY(1);
-                        onTransform({
-                            x: node.x(),
-                            y: node.y(),
-                            width: Math.max(5, node.width() * scaleX),
-                            height: Math.max(5, node.height() * scaleY),
-                            rotation: node.rotation(),
-                        });
-                    }
-                }}
-            />
-            {isSelected && (
-                <Transformer
-                    ref={trRef}
-                    anchorStroke="#3B82F6"
-                    anchorFill="white"
-                    anchorSize={10}
-                    borderStroke="#3B82F6"
-                    borderStrokeWidth={2}
-                    boundBoxFunc={(oldBox, newBox) => {
-                        // limit resize
-                        if (newBox.width < 5 || newBox.height < 5) {
-                            return oldBox;
-                        }
-                        return newBox;
-                    }}
-                />
-            )}
-        </React.Fragment>
-    );
-};
 
 const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
     baseImage,
@@ -131,11 +50,7 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
     detectedObjects,
     selectedObjectMasks,
     onObjectMaskToggle,
-    selectedLayerId,
-    onSelectLayer,
-    onUpdateLayerTransform,
-    onInspectElement,
-    inspectedElementMask,
+    isObjectSelectionMode,
 }, stageRef) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -172,7 +87,6 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
     
     const [initialMaskImage, setInitialMaskImage] = useState<HTMLImageElement | null>(null);
     const [maskImgFromUrl] = useImage(maskDataUrl || '');
-    const [inspectedMaskImage] = useImage(inspectedElementMask || '');
 
     const hotspotRef = useRef<Konva.Circle>(null);
     
@@ -184,35 +98,6 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
             setDisplayedImageSize({ width: displayedImg.width, height: displayedImg.height });
         }
     }, [displayedImg]);
-
-    // Preload object mask images
-    useEffect(() => {
-        if (detectedObjects) {
-            const newObjectImages: { [key: string]: HTMLImageElement } = {};
-            let loadedCount = 0;
-            if (detectedObjects.length === 0) {
-                 setObjectImages({});
-                 return;
-            }
-            detectedObjects.forEach(obj => {
-                const img = new Image();
-                img.src = obj.mask;
-                img.onload = () => {
-                    newObjectImages[obj.mask] = img;
-                    loadedCount++;
-                    if (loadedCount === detectedObjects.length) {
-                        setObjectImages(newObjectImages);
-                    }
-                };
-            });
-        } else {
-            setObjectImages({});
-        }
-    }, [detectedObjects]);
-    
-    const objectSelectionColors = useMemo(() => [
-        '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#6366F1'
-    ], []);
 
     // Fit image to container. This now runs whenever the displayed image size changes.
     useEffect(() => {
@@ -318,7 +203,6 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
             }, hotspotRef.current.getLayer());
 
             anim.start();
-            // FIX: The useEffect cleanup function must return void. anim.stop() returns the animation instance.
             return () => {
                 anim.stop();
             };
@@ -327,12 +211,6 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
 
 
     const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
-        // Deselect if clicking on the background
-        const didClickOnEmpty = e.target === e.target.getStage();
-        if (didClickOnEmpty) {
-            onSelectLayer(null);
-        }
-
         if (!isMasking) return;
         isDrawing.current = true;
         const stage = e.target.getStage();
@@ -431,7 +309,7 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
     };
 
     const handleImageClick = (e: KonvaEventObject<MouseEvent>) => {
-        if (detectedObjects || activeTool === 'transform' || isMasking) return;
+        if (isMasking || isObjectSelectionMode) return;
         
         const stage = e.target.getStage();
         if (!stage || !imageRef.current) return;
@@ -480,19 +358,15 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
 
     
     const cursorStyle = useMemo(() => {
-        if (detectedObjects) return 'default';
-        if (activeTool === 'transform') return 'default';
         if (isMasking) return 'crosshair';
+        if (isObjectSelectionMode) return 'pointer';
         if (['addObject', 'enhance'].includes(activeTool)) return 'pointer';
         return 'grab';
-    }, [isMasking, activeTool, detectedObjects]);
+    }, [isMasking, activeTool, isObjectSelectionMode]);
 
-    const handleUpdateFullTransform = useCallback((layerId: string, newAttrs: any) => {
-        const layer = layers.find(l => l.id === layerId);
-        if (layer?.transform) {
-            onUpdateLayerTransform(layerId, { ...layer.transform, ...newAttrs });
-        }
-    }, [layers, onUpdateLayerTransform]);
+    const objectSelectionColors = useMemo(() => [
+        '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#6366F1'
+    ], []);
 
     return (
         <div 
@@ -511,17 +385,12 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
                 scaleY={stageState.scale}
                 x={stageState.x}
                 y={stageState.y}
-                draggable={!isMasking && !detectedObjects && activeTool !== 'transform'}
+                draggable={!isMasking && !isObjectSelectionMode}
                 onDragEnd={(e) => {
                     onStageStateChange({ ...stageState, x: e.target.x(), y: e.target.y() });
                 }}
                 style={{ cursor: cursorStyle }}
-                onClick={(e: KonvaEventObject<MouseEvent>) => {
-                    const didClickOnEmpty = e.target === e.target.getStage();
-                    if (didClickOnEmpty) {
-                        onSelectLayer(null);
-                    }
-                }}
+                onClick={(e: KonvaEventObject<MouseEvent>) => {}}
             >
                 <KonvaLayer>
                     {displayedImg && (
@@ -535,21 +404,6 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
                             onTap={handleImageClick}
                         />
                     )}
-
-                    {imageLayers.map(layer => (
-                        <TransformableImage
-                            key={layer.id}
-                            layer={layer}
-                            isSelected={selectedLayerId === layer.id}
-                            onSelect={() => {
-                                if (activeTool === 'transform') {
-                                    onSelectLayer(layer.id);
-                                }
-                            }}
-                            onTransform={(newAttrs) => onUpdateLayerTransform(layer.id, newAttrs)}
-                            onDragEnd={(newAttrs) => handleUpdateFullTransform(layer.id, newAttrs)}
-                        />
-                    ))}
                 </KonvaLayer>
 
                 <KonvaLayer
@@ -558,38 +412,31 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
                     listening={false}
                 />
 
-                {detectedObjects && (
-                     <KonvaLayer>
-                        {detectedObjects.map((obj, index) => {
-                            const isSelected = selectedObjectMasks.includes(obj.mask);
-                            const color = objectSelectionColors[index % objectSelectionColors.length];
-                            if (objectImages[obj.mask]) {
-                                return (
-                                    <KonvaImage
-                                        key={obj.mask}
-                                        image={objectImages[obj.mask]}
-                                        width={displayedImageSize.width}
-                                        height={displayedImageSize.height}
-                                        fill={color}
-                                        opacity={isSelected ? 0.6 : 0.4}
-                                        globalCompositeOperation="multiply"
-                                        onClick={() => onObjectMaskToggle(obj.mask)}
-                                        onTap={() => onObjectMaskToggle(obj.mask)}
-                                        onMouseEnter={e => {
-                                            const stage = e.target.getStage();
-                                            if (stage) stage.container().style.cursor = 'pointer';
-                                        }}
-                                        onMouseLeave={e => {
-                                             const stage = e.target.getStage();
-                                            if (stage) stage.container().style.cursor = 'default';
-                                        }}
-                                    />
-                                );
-                            }
-                            return null;
-                        })}
-                    </KonvaLayer>
-                )}
+                <KonvaLayer listening={isObjectSelectionMode}>
+                    {isObjectSelectionMode && detectedObjects?.map((obj, index) => {
+                        const [maskImg] = useImage(obj.mask);
+                        const isSelected = selectedObjectMasks.includes(obj.mask);
+                        const color = objectSelectionColors[index % objectSelectionColors.length];
+                        return maskImg && (
+                            <KonvaImage
+                                key={obj.name}
+                                image={maskImg}
+                                width={displayedImageSize.width}
+                                height={displayedImageSize.height}
+                                onClick={() => onObjectMaskToggle(obj.mask)}
+                                onTap={() => onObjectMaskToggle(obj.mask)}
+                                opacity={isSelected ? 0.7 : 0.45}
+                                globalCompositeOperation="source-over"
+                                filters={[Konva.Filters.RGB]}
+                                red={parseInt(color.slice(1, 3), 16)}
+                                green={parseInt(color.slice(3, 5), 16)}
+                                blue={parseInt(color.slice(5, 7), 16)}
+                                cache={[isSelected, color, displayedImageSize]}
+                            />
+                        );
+                    })}
+                </KonvaLayer>
+
                 <KonvaLayer listening={false}>
                     {editHotspot && displayedImageSize.width > 0 && (
                         <Circle
@@ -600,16 +447,6 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
                             stroke="#3B82F6"
                             strokeWidth={2 / stageState.scale}
                             fill="#3B82F64D"
-                        />
-                    )}
-                    {inspectedElementMask && inspectedMaskImage && (
-                        <KonvaImage
-                            image={inspectedMaskImage}
-                            width={displayedImageSize.width}
-                            height={displayedImageSize.height}
-                            fill="#3B82F6"
-                            opacity={0.5}
-                            globalCompositeOperation="multiply"
                         />
                     )}
                 </KonvaLayer>

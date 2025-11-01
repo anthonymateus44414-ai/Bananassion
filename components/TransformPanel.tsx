@@ -2,11 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React,
- 
-{
- 
-useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layer } from '../types';
 import Tooltip from './Tooltip';
 

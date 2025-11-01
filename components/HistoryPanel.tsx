@@ -20,24 +20,24 @@ interface HistoryPanelProps {
 
 const getActionName = (currentState: Layer[], previousState: Layer[] | undefined): string => {
     if (!previousState) {
-        return "Base Image";
+        return "Базовое изображение";
     }
     if (currentState.length > previousState.length) {
         return currentState[currentState.length - 1].name;
     }
     if (currentState.length < previousState.length) {
-        return "Remove Layer";
+        return "Удаление слоя";
     }
     // Simple check for reorder or toggle by comparing layer IDs at the same position
     for (let i = 0; i < currentState.length; i++) {
         if (!previousState[i] || currentState[i].id !== previousState[i].id) {
-            return "Reorder Layers";
+            return "Изменение порядка слоев";
         }
         if (currentState[i].isVisible !== previousState[i].isVisible) {
-            return `Toggle Visibility: ${currentState[i].name}`;
+            return `Видимость: ${currentState[i].name}`;
         }
     }
-    return "Layer Operation";
+    return "Операция со слоем";
 };
 
 const HistoryPanel: React.FC<HistoryPanelProps> = ({ history, onJumpToState }) => {

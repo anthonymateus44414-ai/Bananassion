@@ -17,11 +17,10 @@ export type Tool =
   | 'addPerson'
   | 'addObject'
   | 'transcribe'
-  // FIX: Add missing tool types to resolve multiple comparison and assignment errors across the application.
-  | 'image'
-  | 'transform'
   | 'filter'
   | 'color'
+  // FIX: Add missing tool types to resolve comparison and assignment errors across the app.
+  | 'image'
   | 'facial'
   | 'mix'
   | 'magicEraser';
@@ -33,6 +32,7 @@ export interface Layer {
   params: any;
   isVisible: boolean;
   cachedResult?: string;
+  // FIX: Add optional transform property to support transformable image layers.
   transform?: {
     x: number;
     y: number;

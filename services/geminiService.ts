@@ -947,6 +947,103 @@ Return a JSON object containing a single key "objects", which is an array of the
 };
 
 /**
+ * Detects and segments distinct objects in an image.
+ * @param originalImage The image to analyze.
+ * @returns A promise that resolves to an array of detected objects with their masks.
+ */
+export const detectObjects = async (
+    originalImage: File,
+): Promise<DetectedObject[]> => {
+    return executeApiCall('object detection', async () => {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+        const originalImagePart = await fileToPart(originalImage);
+        const prompt = `You are a highly advanced image segmentation model. Your task is to analyze the provided image and identify the most prominent and distinct objects. For each identified object, you must:
+1. Provide a concise "name" for the object (e.g., "Red Car", "Person's Shirt", "Dog").
+2. Generate a precise, pixel-perfect segmentation "mask". The mask must be a PNG image of the exact same dimensions as the original input image. The mask should be white (#FFFFFF) for every pixel belonging to the object and black (#000000) for all other pixels.
+3. Encode this PNG mask image into a Base64 string.
+
+Return a JSON object containing a single key "objects", which is an array of the identified objects. If no distinct objects are found, return an empty array. Do not include any other text or markdown in your response.`;
+        const textPart = { text: prompt };
+
+        const response: GenerateContentResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [textPart, originalImagePart] },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        objects: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    name: { type: Type.STRING },
+                                    mask: { type: Type.STRING }
+                                },
+                                required: ["name", "mask"]
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let result;
+        try {
+            const jsonStr = response.text.trim();
+            const cleanedJsonStr = jsonStr.replace(/^```json\s*|```$/g, '');
+            result = JSON.parse(cleanedJsonStr);
+        } catch (parseError) {
+            console.error('Failed to parse JSON response from AI for object detection:', { responseText: response.text, parseError });
+            throw new Error("The AI returned an invalid response for object detection. Please try again.");
+        }
+
+        if (result && Array.isArray(result.objects)) {
+            return result.objects.map((obj: any) => ({
+                name: obj.name,
+                mask: `data:image/png;base64,${obj.mask}`
+            }));
+        }
+        
+        throw new Error("AI response was not in the expected format for object detection.");
+    });
+};
+
+/**
+ * Composites multiple item images onto a target image based on a prompt.
+ * @param targetImage The base image.
+ * @param itemImages An array of item images to add.
+ * @param prompt The prompt describing how to combine them.
+ * @returns A promise that resolves to the data URL of the final image.
+ */
+export const generateMixedImage = async (
+    targetImage: File,
+    itemImages: File[],
+    prompt: string,
+): Promise<string> => {
+    return executeApiCall('mix & match', async () => {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+        const targetImagePart = await fileToPart(targetImage);
+        const itemImageParts = await Promise.all(itemImages.map(file => fileToPart(file)));
+
+        const fullPrompt = `You are an expert in photorealistic image composition. You are given a primary target image and a set of reference images containing items. Your task is to follow the user's prompt to composite the items from the reference images onto the target image. The user prompt is: "${prompt}". Isolate the items from their backgrounds in the reference photos and seamlessly blend them into the target image, matching the lighting, scale, shadows, and perspective. The final output must only be the edited target image.`;
+        const textPart = { text: fullPrompt };
+        const allParts = [textPart, targetImagePart, ...itemImageParts];
+
+        const response: GenerateContentResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: allParts },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+        
+        return handleApiResponse(response, 'mix & match');
+    });
+};
+
+/**
  * Generates suggestions for a batch processing recipe.
  * @param recipeSteps An array of strings describing the recipe.
  * @returns A promise that resolves to an array of suggestion strings.

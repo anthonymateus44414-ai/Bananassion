@@ -22,6 +22,12 @@ import LayersPanel from './LayersPanel.tsx';
 import TranscribePanel from './TranscribePanel.tsx';
 import MaskingPanel from './MaskingPanel.tsx';
 import HistoryPanel from './HistoryPanel.tsx';
+import FilterPanel from './FilterPanel.tsx';
+import ColorPanel from './ColorPanel.tsx';
+import FacialPanel from './FacialPanel.tsx';
+import MixPanel from './MixPanel.tsx';
+import MagicEraserPanel from './MagicEraserPanel.tsx';
+
 
 // Import types
 import { Tool, Layer, Hotspot, CustomStyle, DetectedObject, BrushShape } from '../types.ts';
@@ -37,12 +43,9 @@ interface RightSidebarProps {
     activeTool: Tool;
     isLoading: boolean;
     loadingMessage: string;
-    isFindingObjects: boolean;
     layers: Layer[];
     maskDataUrl: string | null;
     editHotspot: Hotspot | null;
-    detectedObjects: DetectedObject[] | null;
-    selectedObjectMasks: string[];
     history: HistoryState;
     hasRedo: boolean;
     isRecording: boolean;
@@ -54,18 +57,15 @@ interface RightSidebarProps {
     brushShape: BrushShape;
     brushHardness: number;
     maskPreviewOpacity: number;
-    selectedLayer: Layer | null;
-    isInspecting: boolean;
-    inspectionResult: { name: string; mask: string | null; css: object | null; error: string | null; } | null;
+    baseImageUrl: string;
+    colorAdjustments: { hue: number; saturation: number; brightness: number; };
+    detectedObjects: DetectedObject[] | null;
+    selectedObjectMasks: string[];
 
     // Handlers
     onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible' | 'cachedResult'>) => void;
     onToggleMasking: () => void;
-    onFindObjects: () => void;
-    onObjectMaskToggle: (maskUrl: string) => void;
     onSetMaskDataUrl: (dataUrl: string | null) => void;
-    onClearObjects: () => void;
-    onConfirmSelection: () => void;
     onReorderLayers: (layers: Layer[]) => void;
     onToggleVisibility: (id: string) => void;
     onRemoveLayer: (id: string) => void;
@@ -84,8 +84,11 @@ interface RightSidebarProps {
     onOpacityChange: (opacity: number) => void;
     onConfirmMasking: () => void;
     onCancelMasking: () => void;
-    onUpdateLayerTransform: (layerId: string, newTransform: Layer['transform']) => void;
-    onClearInspection: () => void;
+    onColorAdjustmentsChange: (adjustments: { hue: number; saturation: number; brightness: number; }) => void;
+    onFindObjects: () => void;
+    onObjectMaskToggle: (maskUrl: string) => void;
+    onClearObjects: () => void;
+    onConfirmSelection: () => void;
 }
 
 const RightSidebar: React.FC<RightSidebarProps> = (props) => {
@@ -131,6 +134,30 @@ const RightSidebar: React.FC<RightSidebarProps> = (props) => {
                 onStart={props.onStartRecording}
                 onStop={props.onStopRecording}
             />;
+            case 'filter': return <FilterPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
+            case 'color': return <ColorPanel 
+                onAddLayer={props.onAddLayer} 
+                isLoading={props.isLoading} 
+                maskDataUrl={props.maskDataUrl}
+                onToggleMasking={props.onToggleMasking}
+                adjustments={props.colorAdjustments}
+                onAdjustmentsChange={props.onColorAdjustmentsChange}
+            />;
+            case 'facial': return <FacialPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} maskDataUrl={props.maskDataUrl} onToggleMasking={props.onToggleMasking} />;
+            case 'mix': return <MixPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
+            case 'magicEraser': return <MagicEraserPanel 
+                onAddLayer={props.onAddLayer}
+                isLoading={props.isLoading}
+                maskDataUrl={props.maskDataUrl}
+                onToggleMasking={props.onToggleMasking}
+                onFindObjects={props.onFindObjects}
+                detectedObjects={props.detectedObjects}
+                selectedObjectMasks={props.selectedObjectMasks}
+                onSetMaskDataUrl={props.onSetMaskDataUrl}
+                onClearObjects={props.onClearObjects}
+                onConfirmSelection={props.onConfirmSelection}
+                onObjectMaskToggle={props.onObjectMaskToggle}
+            />;
             default: return <div className="p-4"><p>Select a tool</p></div>;
         }
     };
@@ -168,6 +195,7 @@ const RightSidebar: React.FC<RightSidebarProps> = (props) => {
             {activeTab === 'layers' && (
                 <LayersPanel
                     layers={props.layers}
+                    baseImageUrl={props.baseImageUrl}
                     loadingMessage={props.loadingMessage}
                     onReorderLayers={props.onReorderLayers}
                     onToggleVisibility={props.onToggleVisibility}

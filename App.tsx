@@ -14,8 +14,6 @@ import Spinner from './components/Spinner.tsx';
 import { Tool, Layer, Hotspot, CustomStyle, ProjectState, BrushShape, DetectedObject } from './types.ts';
 import { dataURLtoFile, fileToDataURL, createStyleThumbnail, applyCrop, downscaleImage, createGeminiBlob, decode, decodeAudioData } from './utils.ts';
 import * as geminiService from './services/geminiService.ts';
-// FIX: The 'LiveSession' type is not exported from the '@google/genai' module.
-// It has been removed from the import statement to resolve the error.
 import { GoogleGenAI, Modality } from '@google/genai';
 import Konva from 'konva';
 import { XCircleIcon } from './components/icons.tsx';
@@ -35,8 +33,7 @@ type LayerAction =
     | { type: 'TOGGLE_VISIBILITY'; payload: { layerId: string } }
     | { type: 'RESET' }
     | { type: 'UPDATE_CACHED_RESULT'; payload: { layerId: string; cachedResult: string | null } }
-    | { type: 'CLEAR_VISIBLE_CACHE' }
-    | { type: 'UPDATE_LAYER_TRANSFORM'; payload: { layerId: string; transform: Layer['transform'] } };
+    | { type: 'CLEAR_VISIBLE_CACHE' };
 
 type HistoryAction = 
     | LayerAction 
@@ -124,13 +121,6 @@ const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
                 return layer;
             });
             return hasChanged ? newLayers : state;
-        }
-        case 'UPDATE_LAYER_TRANSFORM': {
-            return state.map(l =>
-                l.id === action.payload.layerId
-                    ? { ...l, transform: action.payload.transform }
-                    : l
-            );
         }
         default:
             return state;
@@ -236,7 +226,12 @@ const App: React.FC = () => {
     const [brushShape, setBrushShape] = useState<BrushShape>('circle');
     const [brushHardness, setBrushHardness] = useState(1.0);
     const [maskPreviewOpacity, setMaskPreviewOpacity] = useState(0.5);
-    const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+
+    // Tool-specific state
+    const [colorAdjustments, setColorAdjustments] = useState({ hue: 0, saturation: 0, brightness: 0 });
+    const [detectedObjects, setDetectedObjects] = useState<DetectedObject[] | null>(null);
+    const [selectedObjectMasks, setSelectedObjectMasks] = useState<string[]>([]);
+    const [isObjectSelectionMode, setIsObjectSelectionMode] = useState(false);
     
     // UI state
 
@@ -350,6 +345,20 @@ const App: React.FC = () => {
                 const referenceImages = await Promise.all(params.referenceImages.map((url: string, i: number) => dataURLtoFile(url, `style-ref-${i}.png`)));
                 return geminiService.generateStyledImage(inputFile, referenceImages);
             }
+            case 'filter': return geminiService.generateFilteredImage(inputFile, params.prompt);
+            case 'color': {
+                if (params.mask) {
+                    const maskFile = dataURLtoFile(params.mask, 'mask.png');
+                    return geminiService.generateEditedImage(inputFile, params.prompt, maskFile);
+                }
+                return geminiService.generateColorAdjustedImage(inputFile, params.prompt);
+            }
+            case 'facial': return geminiService.generateEditedImage(inputFile, params.prompt, dataURLtoFile(params.mask, 'mask.png'));
+            case 'magicEraser': return geminiService.generateInpaintedImage(inputFile, dataURLtoFile(params.mask, 'mask.png'), params.fillPrompt);
+            case 'mix': {
+                const itemFiles = await Promise.all(params.itemDataUrls.map((url: string, i: number) => dataURLtoFile(url, `mix-item-${i}.png`)));
+                return geminiService.generateMixedImage(inputFile, itemFiles, params.prompt);
+            }
             default: return null;
         }
     }, []);
@@ -429,7 +438,10 @@ const App: React.FC = () => {
         setIsMasking(false);
         setMaskDataUrl(null);
         setStageState({ scale: 1, x: 0, y: 0 });
-        setSelectedLayerId(null);
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+        setIsObjectSelectionMode(false);
+        setColorAdjustments({ hue: 0, saturation: 0, brightness: 0 });
     }, [dispatch]);
 
     // --- History Management ---
@@ -764,7 +776,9 @@ const App: React.FC = () => {
         setIsMasking(false);
         setMaskDataUrl(null);
         setEditHotspot(null);
-        setSelectedLayerId(null);
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+        setIsObjectSelectionMode(false);
     
         // Activate the new tool and its specific mode.
         setActiveTool(tool);
@@ -784,12 +798,11 @@ const App: React.FC = () => {
         setMaskDataUrl(null);
         setIsMasking(false);
         setEditHotspot(null);
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+        setIsObjectSelectionMode(false);
     }, [dispatch]);
     
-    const handleUpdateLayerTransform = useCallback((layerId: string, newTransform: Layer['transform']) => {
-        dispatch({ type: 'UPDATE_LAYER_TRANSFORM', payload: { layerId, transform: newTransform } });
-    }, [dispatch]);
-
     const handleReorderLayers = useCallback((newOrder: Layer[]) => dispatch({ type: 'REORDER', payload: { newOrder } }), [dispatch]);
     const handleToggleVisibility = useCallback((layerId: string) => dispatch({ type: 'TOGGLE_VISIBILITY', payload: { layerId } }), [dispatch]);
     const handleRemoveLayer = useCallback((layerId: string) => dispatch({ type: 'REMOVE', payload: { layerId } }), [dispatch]);
@@ -893,11 +906,45 @@ const App: React.FC = () => {
         reader.readAsText(file);
     }, [resetState]);
     
-    const selectedLayer = useMemo(() => {
-        if (!selectedLayerId) return null;
-        return history.present.find(l => l.id === selectedLayerId) || null;
-    }, [selectedLayerId, history.present]);
+    // --- Magic Eraser Handlers ---
+    const handleFindObjects = useCallback(async () => {
+        if (!baseImage) return;
+        setIsLoading(true);
+        setLoadingMessage('Detecting objects...');
+        setError(null);
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+        try {
+            const objects = await geminiService.detectObjects(baseImage);
+            if (objects.length === 0) {
+                setError("No distinct objects were found in the image.");
+            }
+            setDetectedObjects(objects);
+            setIsObjectSelectionMode(true);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [baseImage]);
 
+    const handleObjectMaskToggle = useCallback((maskUrl: string) => {
+        setSelectedObjectMasks(prev =>
+            prev.includes(maskUrl) ? prev.filter(m => m !== maskUrl) : [...prev, maskUrl]
+        );
+    }, []);
+
+    const handleClearObjects = useCallback(() => {
+        setDetectedObjects(null);
+        setSelectedObjectMasks([]);
+        setIsObjectSelectionMode(false);
+        setMaskDataUrl(null); // Clear combined mask
+    }, [setMaskDataUrl]);
+
+    const handleConfirmSelection = useCallback(() => {
+        setIsObjectSelectionMode(false); // Hide the overlays, but keep the combined mask in maskDataUrl
+    }, []);
+    
     if (isLoading && !baseImage) { // Only show full-screen spinner if there's no image
         return (
             <div className="w-screen h-screen flex flex-col items-center justify-center bg-bg-main text-center p-8">
@@ -941,15 +988,10 @@ const App: React.FC = () => {
                         brushShape={brushShape}
                         brushHardness={brushHardness}
                         maskPreviewOpacity={maskPreviewOpacity}
-                        detectedObjects={null}
-                        selectedObjectMasks={[]}
-// FIX: Pass the 'handleObjectMaskToggle' function to the 'onObjectMaskToggle' prop.
-                        onObjectMaskToggle={() => {}}
-                        selectedLayerId={selectedLayerId}
-                        onSelectLayer={setSelectedLayerId}
-                        onUpdateLayerTransform={handleUpdateLayerTransform}
-                        onInspectElement={() => {}}
-                        inspectedElementMask={null}
+                        detectedObjects={detectedObjects}
+                        selectedObjectMasks={selectedObjectMasks}
+                        onObjectMaskToggle={handleObjectMaskToggle}
+                        isObjectSelectionMode={isObjectSelectionMode}
                     />
                 </div>
 
@@ -958,12 +1000,9 @@ const App: React.FC = () => {
                     activeTool={activeTool}
                     isLoading={isLoading}
                     loadingMessage={isLoading ? loadingMessage : ''}
-                    isFindingObjects={false}
                     layers={history.present}
                     maskDataUrl={maskDataUrl}
                     editHotspot={editHotspot}
-                    detectedObjects={null}
-                    selectedObjectMasks={[]}
                     history={history}
                     hasRedo={history.future.length > 0}
                     isRecording={transcriptionStatus === 'recording'}
@@ -975,18 +1014,14 @@ const App: React.FC = () => {
                     brushShape={brushShape}
                     brushHardness={brushHardness}
                     maskPreviewOpacity={maskPreviewOpacity}
-                    selectedLayer={selectedLayer}
-                    isInspecting={false}
-                    inspectionResult={null}
+                    baseImageUrl={baseImageUrl}
+                    colorAdjustments={colorAdjustments}
+                    detectedObjects={detectedObjects}
+                    selectedObjectMasks={selectedObjectMasks}
                     // Handlers
                     onAddLayer={handleAddLayer}
                     onToggleMasking={handleToggleMasking}
-                    onFindObjects={() => {}}
-// FIX: Pass the 'handleObjectMaskToggle' function to the 'onObjectMaskToggle' prop.
-                    onObjectMaskToggle={() => {}}
                     onSetMaskDataUrl={setMaskDataUrl}
-                    onClearObjects={() => {}}
-                    onConfirmSelection={() => {}}
                     onReorderLayers={handleReorderLayers}
                     onToggleVisibility={handleToggleVisibility}
                     onRemoveLayer={handleRemoveLayer}
@@ -1005,8 +1040,11 @@ const App: React.FC = () => {
                     onOpacityChange={setMaskPreviewOpacity}
                     onConfirmMasking={handleConfirmMasking}
                     onCancelMasking={handleCancelMasking}
-                    onUpdateLayerTransform={handleUpdateLayerTransform}
-                    onClearInspection={() => {}}
+                    onColorAdjustmentsChange={setColorAdjustments}
+                    onFindObjects={handleFindObjects}
+                    onObjectMaskToggle={handleObjectMaskToggle}
+                    onClearObjects={handleClearObjects}
+                    onConfirmSelection={handleConfirmSelection}
                 />
             </main>
              {isLoading && baseImage && (
