@@ -57,7 +57,7 @@ const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
             // layers that were positioned at or after the original index.
             const newLayers = state.filter((_, index) => index !== layerIndex);
             return newLayers.map((layer, newIndex) => {
-                if (newIndex >= layerIndex && layer.tool !== 'image') {
+                if (newIndex >= layerIndex) {
                     return { ...layer, cachedResult: undefined };
                 }
                 return layer;
@@ -78,7 +78,7 @@ const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
             }
             if (firstChangeIndex !== -1) {
                 return newOrder.map((l, i) =>
-                    i >= firstChangeIndex && l.tool !== 'image' ? { ...l, cachedResult: undefined } : l
+                    i >= firstChangeIndex ? { ...l, cachedResult: undefined } : l
                 );
             }
             return newOrder;
@@ -93,7 +93,7 @@ const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
                     return layer;
                 }
                 // For the target layer and all subsequent layers, invalidate the cache.
-                const newLayer = (layer.tool !== 'image') ? { ...layer, cachedResult: undefined } : { ...layer };
+                const newLayer = { ...layer, cachedResult: undefined };
                 // For the target layer specifically, also toggle its visibility.
                 if (index === layerIndex) {
                     newLayer.isVisible = !layer.isVisible;
@@ -114,7 +114,7 @@ const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
         case 'CLEAR_VISIBLE_CACHE': {
             let hasChanged = false;
             const newLayers = state.map(layer => {
-                if (layer.isVisible && layer.cachedResult && layer.tool !== 'image') {
+                if (layer.isVisible && layer.cachedResult) {
                     hasChanged = true;
                     return { ...layer, cachedResult: undefined };
                 }
@@ -368,7 +368,7 @@ const App: React.FC = () => {
         let isCancelled = false;
         const processLayers = async () => {
             if (!baseImage) return;
-            const generativeLayers = history.present.filter(l => l.tool !== 'image');
+            const generativeLayers = history.present;
 
             const firstUncachedIndex = generativeLayers.findIndex(l => l.isVisible && !l.cachedResult);
 
@@ -601,7 +601,7 @@ const App: React.FC = () => {
     
         setVoiceCommandFeedback(feedbackMessage);
     
-    }, [handleUndo, handleRedo, handleDownload, handleStartOver, handleRevertAll, setActiveTool]);
+    }, [handleUndo, handleRedo, handleDownload, handleStartOver, handleRevertAll]);
 
     // --- Transcription Management ---
     const handleStopRecording = useCallback(() => {
@@ -939,7 +939,7 @@ const App: React.FC = () => {
         setSelectedObjectMasks([]);
         setIsObjectSelectionMode(false);
         setMaskDataUrl(null); // Clear combined mask
-    }, [setMaskDataUrl]);
+    }, []);
 
     const handleConfirmSelection = useCallback(() => {
         setIsObjectSelectionMode(false); // Hide the overlays, but keep the combined mask in maskDataUrl

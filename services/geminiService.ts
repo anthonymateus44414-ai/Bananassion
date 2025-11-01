@@ -8,6 +8,8 @@ import { Hotspot, DetectedObject } from '../types.ts';
 import { createExpandedCanvas } from '../utils.ts';
 import { dataURLtoFile } from '../utils.ts';
 
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
 // Helper function to convert a File object to a Gemini API Part
 const fileToPart = async (file: File): Promise<{ inlineData: { mimeType: string; data: string; } }> => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -211,8 +213,6 @@ export const generateImageFromPrompt = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('image generation from prompt', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-
         const response = await ai.models.generateImages({
             model: 'imagen-4.0-generate-001',
             prompt: prompt,
@@ -246,7 +246,6 @@ export const generateEditedImage = async (
     maskImage: File
 ): Promise<string> => {
     return executeApiCall('edit', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const maskImagePart = await fileToPart(maskImage);
         
@@ -276,7 +275,6 @@ export const generateTextEdit = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('text edit', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const fullPrompt = `You are an expert AI photo editor. Perform the following edit on the provided image: "${prompt}". The change should be photorealistic and seamlessly integrated with the rest of the image. The output should be only the final, edited image.`;
         const textPart = { text: fullPrompt };
@@ -307,7 +305,6 @@ export const generateInpaintedImage = async (
 ): Promise<string> => {
     const context = fillPrompt ? 'generative fill' : 'magic eraser';
     return executeApiCall(context, async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const maskImagePart = await fileToPart(maskImage);
         
@@ -344,7 +341,6 @@ export const generateFaceSwap = async (
     options: { expression: 'original' | 'reference'; blending: number }
 ): Promise<string> => {
     return executeApiCall('face swap', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const targetImagePart = await fileToPart(targetImage);
         const maskImagePart = await fileToPart(maskImage);
         const referenceFaceParts = await Promise.all(referenceFaceImages.map(file => fileToPart(file)));
@@ -394,7 +390,6 @@ export const generateStyledImage = async (
     referenceImages: File[],
 ): Promise<string> => {
     return executeApiCall('style transfer', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const targetImagePart = await fileToPart(targetImage);
         const referenceImageParts = await Promise.all(referenceImages.map(file => fileToPart(file)));
 
@@ -425,7 +420,6 @@ export const generateAdjustedImage = async (
     adjustmentPrompt: string,
 ): Promise<string> => {
     return executeApiCall('adjustment', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const prompt = `Perform a global, photorealistic adjustment to the entire image based on this request: "${adjustmentPrompt}". Do not alter a person's identity or the core content. Output only the final adjusted image.`;
         const textPart = { text: prompt };
@@ -454,7 +448,6 @@ export const generateFilteredImage = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('filter', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const fullPrompt = `You are an expert AI photo editor. Apply the following stylistic filter to the provided image: "${prompt}". The change should be applied globally, be photorealistic, and seamlessly integrated. The output should be only the final, edited image.`;
         const textPart = { text: fullPrompt };
@@ -483,7 +476,6 @@ export const generateColorAdjustedImage = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('color adjustment', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         // The prompt from ColorPanel is already well-formed, e.g., "Apply the following adjustments: Hue: +20, Saturation: -15."
         const fullPrompt = `${prompt}. Apply this adjustment photorealistically to the entire image. Output only the final adjusted image.`;
@@ -512,7 +504,6 @@ export const generateReplacedBackground = async (
     backgroundPrompt: string,
 ): Promise<string> => {
     return executeApiCall('background generation', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const prompt = `Identify the main subject and replace the background with this: "${backgroundPrompt}". The foreground subject must remain unchanged. Blend the new background naturally with the subject's lighting and edges. Output only the final image.`;
         const textPart = { text: prompt };
@@ -540,7 +531,6 @@ export const generateReplacedBackgroundFromImage = async (
     backgroundImage: File,
 ): Promise<string> => {
     return executeApiCall('background replacement from image', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const backgroundImagePart = await fileToPart(backgroundImage);
         const prompt = `You are replacing the background of an image. The primary image contains the subject to be preserved. The second image is the new background. Isolate the subject from the primary image and place it onto the new background, ensuring a realistic blend of lighting and edges. Output only the final composite image.`;
@@ -571,7 +561,6 @@ export const generateClothingChange = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('clothing change', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const clothingImagePart = await fileToPart(clothingImage);
         
@@ -601,7 +590,6 @@ export const generateNewAngleImage = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('camera angle', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const fullPrompt = `Regenerate the provided image from a new camera angle, following this instruction: "${prompt}". Keep the subjects, objects, and style of the original image perfectly consistent. Photorealistically generate any new parts of the scene that would become visible from this new angle. Do not alter the existing content. Output only the final, regenerated image.`;
         const textPart = { text: fullPrompt };
@@ -681,7 +669,6 @@ export const generateAddedPerson = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('add person', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const personImagePart = await fileToPart(personImage);
         
@@ -717,7 +704,6 @@ export const generateAddedObjectFromText = async (
     shadows?: string,
 ): Promise<string> => {
     return executeApiCall('add object', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
 
         const defaultIntegration = `It must match the scale, perspective, lighting, and shadows of the scene to look realistic.`;
@@ -762,7 +748,6 @@ export const generateAddedObjectFromUpload = async (
     shadows?: string,
 ): Promise<string> => {
     return executeApiCall('add object', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const objectImagePart = await fileToPart(objectImage);
         
@@ -799,7 +784,6 @@ export const generateAddedObjectFromUpload = async (
  */
 export const generateEnhancedImage = async (originalImage: File, prompt?: string): Promise<string> => {
     return executeApiCall('enhance', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         
         const finalPrompt = prompt
@@ -834,7 +818,6 @@ export const generateAreaEnhancement = async (
     hotspot: Hotspot,
 ): Promise<string> => {
      return executeApiCall('area enhancement', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const fullPrompt = `Instruction: "${prompt}". The user has indicated a point of interest at approximately ${hotspot.x.toFixed(1)}% from the left and ${hotspot.y.toFixed(1)}% from the top of the image. Perform the requested enhancement ONLY on the object/area at that location. The enhancement must blend perfectly with the rest of the image. Do not change any other part of the photo. Output only the final image.`;
         const textPart = { text: fullPrompt };
@@ -860,7 +843,6 @@ export const analyzeStyleFromImages = async (
     styleImages: File[],
 ): Promise<string> => {
     return executeApiCall('style analysis', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const imageParts = await Promise.all(styleImages.map(file => fileToPart(file)));
         const prompt = `Analyze the provided images and describe their shared artistic style in a single, concise, descriptive sentence. Focus on color palette, lighting, texture, and mood. The description should be suitable to be used as a prompt for another AI to replicate this style. Do not use markdown.
 
@@ -891,7 +873,6 @@ export const detectFaces = async (
     originalImage: File,
 ): Promise<DetectedObject[]> => {
     return executeApiCall('face detection', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const prompt = `You are a highly advanced image segmentation model. Your task is to analyze the provided image and identify ALL human faces. For each identified face, you must:
 1. Provide a generic "name" for the face (e.g., "Face 1", "Face 2").
@@ -955,7 +936,6 @@ export const detectObjects = async (
     originalImage: File,
 ): Promise<DetectedObject[]> => {
     return executeApiCall('object detection', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const originalImagePart = await fileToPart(originalImage);
         const prompt = `You are a highly advanced image segmentation model. Your task is to analyze the provided image and identify the most prominent and distinct objects. For each identified object, you must:
 1. Provide a concise "name" for the object (e.g., "Red Car", "Person's Shirt", "Dog").
@@ -1023,7 +1003,6 @@ export const generateMixedImage = async (
     prompt: string,
 ): Promise<string> => {
     return executeApiCall('mix & match', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const targetImagePart = await fileToPart(targetImage);
         const itemImageParts = await Promise.all(itemImages.map(file => fileToPart(file)));
 
@@ -1052,7 +1031,6 @@ export const generateBatchSuggestions = async (
     recipeSteps: string[],
 ): Promise<string[]> => {
     return executeApiCall('batch suggestions', async () => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const prompt = `You are an expert photo editing assistant. A user has created a batch processing "recipe" with the following steps: ${recipeSteps.join(', ')}.
 
 Based on this recipe, provide 2-3 concise, helpful suggestions for other adjustments or considerations the user might find useful. Frame your suggestions as positive tips. Format the response as a JSON array of strings.

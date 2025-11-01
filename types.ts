@@ -20,10 +20,11 @@ export type Tool =
   | 'filter'
   | 'color'
   // FIX: Add missing tool types to resolve comparison and assignment errors across the app.
-  | 'image'
   | 'facial'
   | 'mix'
-  | 'magicEraser';
+  | 'magicEraser'
+  // FIX: Add 'image' to the Tool union type to support image layers used by TransformPanel.
+  | 'image';
 
 export interface Layer {
   id: string;
@@ -32,7 +33,7 @@ export interface Layer {
   params: any;
   isVisible: boolean;
   cachedResult?: string;
-  // FIX: Add optional transform property to support transformable image layers.
+  // FIX: Add optional 'transform' property to support transformations on image layers, resolving errors in TransformPanel.
   transform?: {
     x: number;
     y: number;
