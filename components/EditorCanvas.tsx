@@ -30,6 +30,8 @@ interface EditorCanvasProps {
     selectedObjectMasks: string[];
     onObjectMaskToggle: (maskUrl: string) => void;
     isObjectSelectionMode: boolean;
+    cameraFocusPoint: Hotspot | null;
+    onCameraFocusPointChange: (hotspot: Hotspot | null) => void;
 }
 
 const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
@@ -51,6 +53,8 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
     selectedObjectMasks,
     onObjectMaskToggle,
     isObjectSelectionMode,
+    cameraFocusPoint,
+    onCameraFocusPointChange,
 }, stageRef) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -192,9 +196,11 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
 
     }, [isMasking, maskDataUrl, maskImgFromUrl, displayedImageSize]);
     
+    const hotspotToDisplay = activeTool === 'camera' ? cameraFocusPoint : editHotspot;
+    
     // Animate the hotspot marker with a pulsing effect
     useEffect(() => {
-        if (editHotspot && hotspotRef.current) {
+        if (hotspotToDisplay && hotspotRef.current) {
             const anim = new Konva.Animation(frame => {
                 if (!frame) return;
                 const scale = 1 + Math.sin(frame.time / 200) * 0.2; // pulse effect
@@ -207,7 +213,7 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
                 anim.stop();
             };
         }
-    }, [editHotspot]);
+    }, [hotspotToDisplay]);
 
 
     const handleMouseDown = (e: KonvaEventObject<MouseEvent>) => {
@@ -328,7 +334,9 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
             y: (relativeY / displayedImageSize.height) * 100
         };
 
-        if (['addObject', 'enhance'].includes(activeTool)) {
+        if (activeTool === 'camera') {
+            onCameraFocusPointChange(point);
+        } else if (['addObject', 'enhance'].includes(activeTool)) {
             onHotspot(point);
         }
     };
@@ -360,7 +368,7 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
     const cursorStyle = useMemo(() => {
         if (isMasking) return 'crosshair';
         if (isObjectSelectionMode) return 'pointer';
-        if (['addObject', 'enhance'].includes(activeTool)) return 'pointer';
+        if (['addObject', 'enhance', 'camera'].includes(activeTool)) return 'pointer';
         return 'grab';
     }, [isMasking, activeTool, isObjectSelectionMode]);
 
@@ -438,11 +446,11 @@ const EditorCanvas = React.forwardRef<Konva.Stage, EditorCanvasProps>(({
                 </KonvaLayer>
 
                 <KonvaLayer listening={false}>
-                    {editHotspot && displayedImageSize.width > 0 && (
+                    {hotspotToDisplay && displayedImageSize.width > 0 && (
                         <Circle
                             ref={hotspotRef}
-                            x={(editHotspot.x / 100) * displayedImageSize.width}
-                            y={(editHotspot.y / 100) * displayedImageSize.height}
+                            x={(hotspotToDisplay.x / 100) * displayedImageSize.width}
+                            y={(hotspotToDisplay.y / 100) * displayedImageSize.height}
                             radius={10 / stageState.scale}
                             stroke="#3B82F6"
                             strokeWidth={2 / stageState.scale}

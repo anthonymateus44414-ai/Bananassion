@@ -171,9 +171,11 @@ const FaceSwapPanel: React.FC<FaceSwapPanelProps> = ({ onAddLayer, isLoading }) 
                                     {analysisState === 'analyzed' && (
                                         <div className="absolute inset-0">
                                             {detectedFaces.map(face => (
-                                                <button type="button" key={face.mask} onClick={() => setSelectedFaceMask(face.mask)} className={`absolute inset-0 transition-all duration-200 rounded-md ${selectedFaceMask === face.mask ? 'ring-4 ring-primary ring-inset bg-primary/20' : 'bg-black/50 hover:bg-primary/30'}`}>
-                                                    <img src={face.mask} alt="face mask" className="w-full h-full object-contain" style={{ mixBlendMode: 'screen', filter: 'brightness(0) invert(1)' }}/>
-                                                </button>
+                                                <Tooltip key={face.mask} text="Выбрать это лицо для замены">
+                                                    <button type="button" onClick={() => setSelectedFaceMask(face.mask)} className={`absolute inset-0 transition-all duration-200 rounded-md ${selectedFaceMask === face.mask ? 'ring-4 ring-primary ring-inset bg-primary/20' : 'bg-black/50 hover:bg-primary/30'}`}>
+                                                        <img src={face.mask} alt="face mask" className="w-full h-full object-contain" style={{ mixBlendMode: 'screen', filter: 'brightness(0) invert(1)' }}/>
+                                                    </button>
+                                                </Tooltip>
                                             ))}
                                         </div>
                                     )}
@@ -240,23 +242,29 @@ const FaceSwapPanel: React.FC<FaceSwapPanelProps> = ({ onAddLayer, isLoading }) 
                         <div>
                             <label className="block text-sm font-semibold text-text-primary mb-2">Управление выражением</label>
                             <div className="flex bg-stone-200 p-1 rounded-lg">
-                                <button type="button" onClick={() => setExpressionOption('original')} className={`w-1/2 p-2 text-sm font-bold rounded-md transition-colors ${expressionOption === 'original' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:bg-stone-300'}`}>Сохранить оригинал</button>
-                                <button type="button" onClick={() => setExpressionOption('reference')} className={`w-1/2 p-2 text-sm font-bold rounded-md transition-colors ${expressionOption === 'reference' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:bg-stone-300'}`}>Взять с эталона</button>
+                                <Tooltip text="Сохранить выражение лица с исходного (целевого) изображения">
+                                    <button type="button" onClick={() => setExpressionOption('original')} className={`w-1/2 p-2 text-sm font-bold rounded-md transition-colors ${expressionOption === 'original' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:bg-stone-300'}`}>Сохранить оригинал</button>
+                                </Tooltip>
+                                <Tooltip text="Попробовать перенести выражение лица с эталонного изображения">
+                                    <button type="button" onClick={() => setExpressionOption('reference')} className={`w-1/2 p-2 text-sm font-bold rounded-md transition-colors ${expressionOption === 'reference' ? 'bg-white text-primary shadow-sm' : 'text-text-secondary hover:bg-stone-300'}`}>Взять с эталона</button>
+                                </Tooltip>
                             </div>
                         </div>
                         <div>
                             <label htmlFor="blending-strength" className="block text-sm font-semibold text-text-primary mb-2">
                                 Сила смешивания: <span className="font-normal text-text-secondary">{getBlendingDescription(blendingStrength)}</span>
                             </label>
-                             <input
-                                id="blending-strength"
-                                type="range"
-                                min="0"
-                                max="100"
-                                value={blendingStrength}
-                                onChange={(e) => setBlendingStrength(Number(e.target.value))}
-                                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
-                            />
+                             <Tooltip side="left" text={`Сила смешивания: ${blendingStrength}%. Настройте баланс между точным соответствием эталону (вправо) и плавным смешиванием (влево).`}>
+                                <input
+                                    id="blending-strength"
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={blendingStrength}
+                                    onChange={(e) => setBlendingStrength(Number(e.target.value))}
+                                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                                />
+                             </Tooltip>
                         </div>
                     </div>
                 </div>

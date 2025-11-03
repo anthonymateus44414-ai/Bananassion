@@ -116,48 +116,54 @@ const ColorPanel: React.FC<ColorPanelProps> = ({
           {/* Hue Slider */}
           <div className="flex items-center gap-3">
               <label htmlFor="hue" className="text-sm font-medium text-text-primary w-20">Оттенок</label>
-              <input
-                  id="hue"
-                  type="range"
-                  min="-100"
-                  max="100"
-                  value={hue}
-                  onChange={(e) => onAdjustmentsChange({ ...adjustments, hue: parseInt(e.target.value, 10) })}
-                  className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
-                  style={{ background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }}
-              />
+              <Tooltip side="left" text={`Оттенок: ${hue}. Изменяет цветовой тон изображения.`}>
+                <input
+                    id="hue"
+                    type="range"
+                    min="-100"
+                    max="100"
+                    value={hue}
+                    onChange={(e) => onAdjustmentsChange({ ...adjustments, hue: parseInt(e.target.value, 10) })}
+                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                    style={{ background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }}
+                />
+              </Tooltip>
               <span className="text-sm font-mono text-text-primary w-10 text-center">{hue}</span>
           </div>
 
           {/* Saturation Slider */}
           <div className="flex items-center gap-3">
               <label htmlFor="saturation" className="text-sm font-medium text-text-primary w-20">Насыщенность</label>
-              <input
-                  id="saturation"
-                  type="range"
-                  min="-100"
-                  max="100"
-                  value={saturation}
-                  onChange={(e) => onAdjustmentsChange({ ...adjustments, saturation: parseInt(e.target.value, 10) })}
-                  className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
-                  style={{ background: `linear-gradient(to right, #808080, hsl(${hue * 1.8}, 100%, 50%))` }}
-              />
+              <Tooltip side="left" text={`Насыщенность: ${saturation}. Изменяет интенсивность цвета.`}>
+                <input
+                    id="saturation"
+                    type="range"
+                    min="-100"
+                    max="100"
+                    value={saturation}
+                    onChange={(e) => onAdjustmentsChange({ ...adjustments, saturation: parseInt(e.target.value, 10) })}
+                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                    style={{ background: `linear-gradient(to right, #808080, hsl(${hue * 1.8}, 100%, 50%))` }}
+                />
+              </Tooltip>
               <span className="text-sm font-mono text-text-primary w-10 text-center">{saturation}</span>
           </div>
 
           {/* Brightness Slider */}
           <div className="flex items-center gap-3">
               <label htmlFor="brightness" className="text-sm font-medium text-text-primary w-20">Яркость</label>
-              <input
-                  id="brightness"
-                  type="range"
-                  min="-100"
-                  max="100"
-                  value={brightness}
-                  onChange={(e) => onAdjustmentsChange({ ...adjustments, brightness: parseInt(e.target.value, 10) })}
-                  className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
-                  style={{ background: 'linear-gradient(to right, black, white)' }}
-              />
+              <Tooltip side="left" text={`Яркость: ${brightness}. Изменяет общую светлоту изображения.`}>
+                <input
+                    id="brightness"
+                    type="range"
+                    min="-100"
+                    max="100"
+                    value={brightness}
+                    onChange={(e) => onAdjustmentsChange({ ...adjustments, brightness: parseInt(e.target.value, 10) })}
+                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                    style={{ background: 'linear-gradient(to right, black, white)' }}
+                />
+              </Tooltip>
               <span className="text-sm font-mono text-text-primary w-10 text-center">{brightness}</span>
           </div>
       </div>

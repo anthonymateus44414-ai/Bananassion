@@ -6,12 +6,12 @@
 export type Tool =
   | 'expand'
   | 'camera'
-  | 'style' // New tool for applying custom styles
+  | 'style'
   | 'adjust'
   | 'enhance'
   | 'retouch'
   | 'textEdit'
-  | 'faceSwap' // New: for swapping faces
+  | 'faceSwap'
   | 'background'
   | 'clothing'
   | 'addPerson'
@@ -19,21 +19,81 @@ export type Tool =
   | 'transcribe'
   | 'filter'
   | 'color'
-  // FIX: Add missing tool types to resolve comparison and assignment errors across the app.
   | 'facial'
   | 'mix'
   | 'magicEraser'
-  // FIX: Add 'image' to the Tool union type to support image layers used by TransformPanel.
-  | 'image';
+  | 'image'
+  | 'transform';
+
+export interface Hotspot {
+    x: number; // percentage
+    y: number; // percentage
+}
+
+// --- Specific Layer Parameter Types ---
+
+export type AdjustLayerParams = { prompt: string };
+export type RetouchLayerParams = { prompt: string; mask: string };
+export type TextEditLayerParams = { prompt: string };
+export type FaceSwapLayerParams = {
+    targetImageDataUrl: string;
+    targetFaceMaskDataUrl: string;
+    referenceFaceDataUrls: string[];
+    options: { expression: 'original' | 'reference'; blending: number };
+};
+export type BackgroundLayerParams = { prompt?: string; backgroundDataUrl?: string };
+export type ClothingLayerParams = { clothingDataUrl: string; prompt: string };
+export type AddPersonLayerParams = { personDataUrl: string; prompt: string };
+export type AddObjectLayerParams = {
+    prompt?: string;
+    objectDataUrl?: string;
+    hotspot: Hotspot;
+    lighting?: string;
+    shadows?: string;
+};
+export type EnhanceLayerParams = { prompt?: string; hotspot?: Hotspot };
+export type ExpandLayerParams = { direction?: 'up' | 'down' | 'left' | 'right'; percentage: number };
+export type CameraLayerParams = { prompt: string; hotspot?: Hotspot };
+export type StyleLayerParams = { referenceImages: string[] };
+export type FilterLayerParams = { prompt: string };
+export type ColorLayerParams = { prompt: string; mask: string | null };
+export type FacialLayerParams = { prompt: string; mask: string };
+export type MagicEraserLayerParams = { mask: string; fillPrompt: string | null };
+export type MixLayerParams = { itemDataUrls: string[]; prompt: string };
+export type ImageLayerParams = { imageDataUrl: string; };
+export type TransformLayerParams = {}; // No specific params, uses layer's top-level transform
+
+// --- Discriminated Union for Layer Parameters ---
+
+export type LayerParams =
+  | { tool: 'adjust'; params: AdjustLayerParams }
+  | { tool: 'retouch'; params: RetouchLayerParams }
+  | { tool: 'textEdit'; params: TextEditLayerParams }
+  | { tool: 'faceSwap'; params: FaceSwapLayerParams }
+  | { tool: 'background'; params: BackgroundLayerParams }
+  | { tool: 'clothing'; params: ClothingLayerParams }
+  | { tool: 'addPerson'; params: AddPersonLayerParams }
+  | { tool: 'addObject'; params: AddObjectLayerParams }
+  | { tool: 'enhance'; params: EnhanceLayerParams }
+  | { tool: 'expand'; params: ExpandLayerParams }
+  | { tool: 'camera'; params: CameraLayerParams }
+  | { tool: 'style'; params: StyleLayerParams }
+  | { tool: 'filter'; params: FilterLayerParams }
+  | { tool: 'color'; params: ColorLayerParams }
+  | { tool: 'facial'; params: FacialLayerParams }
+  | { tool: 'magicEraser'; params: MagicEraserLayerParams }
+  | { tool: 'mix'; params: MixLayerParams }
+  | { tool: 'image'; params: ImageLayerParams }
+  | { tool: 'transform'; params: TransformLayerParams };
+
 
 export interface Layer {
   id: string;
   name: string;
   tool: Tool;
-  params: any;
+  params: LayerParams['params'];
   isVisible: boolean;
   cachedResult?: string;
-  // FIX: Add optional 'transform' property to support transformations on image layers, resolving errors in TransformPanel.
   transform?: {
     x: number;
     y: number;
@@ -43,20 +103,14 @@ export interface Layer {
   };
 }
 
-export interface Hotspot {
-    x: number; // percentage
-    y: number; // percentage
-}
-
 export interface CustomStyle {
     id: string;
     name: string;
     description: string | null;
     thumbnailUrl: string;
-    files: string[]; // Store as data URLs for localStorage compatibility
+    files: string[];
 }
 
-// FIX: Exported the missing 'FilterSuggestion' type.
 export interface FilterSuggestion {
   name: string;
   prompt: string;
@@ -75,7 +129,6 @@ export interface ProjectState {
         future: Layer[][];
     };
     customStyles?: CustomStyle[];
-    // For backward compatibility with old project files
     layers?: Layer[];
     undoneLayers?: Layer[];
 }

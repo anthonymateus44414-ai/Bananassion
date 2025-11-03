@@ -56,12 +56,14 @@ const CssInspectorPanel: React.FC<CssInspectorPanelProps> = ({ isInspecting, ins
                 <XCircleIcon className="w-12 h-12 text-red-500"/>
                 <h3 className="text-xl font-bold text-center text-text-primary">Ошибка анализа</h3>
                 <p className="text-text-secondary bg-red-50 p-3 rounded-lg border border-red-200">{inspectionResult.error}</p>
-                 <button
-                    onClick={onClearInspection}
-                    className="w-full mt-4 bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-base"
-                >
-                    Попробовать снова
-                </button>
+                 <Tooltip text="Очистить текущую ошибку и вернуться в режим инспектора">
+                    <button
+                        onClick={onClearInspection}
+                        className="w-full mt-4 bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-base"
+                    >
+                        Попробовать снова
+                    </button>
+                 </Tooltip>
             </div>
         );
     }
@@ -100,12 +102,14 @@ const CssInspectorPanel: React.FC<CssInspectorPanelProps> = ({ isInspecting, ins
                     </Tooltip>
                 </div>
                 
-                <button
-                    onClick={onClearInspection}
-                    className="w-full mt-2 bg-secondary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-opacity-80 active:scale-[0.98] text-base"
-                >
-                    Проверить другой элемент
-                </button>
+                <Tooltip text="Очистить результат и вернуться в режим инспектора, чтобы выбрать другой элемент">
+                    <button
+                        onClick={onClearInspection}
+                        className="w-full mt-2 bg-secondary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-opacity-80 active:scale-[0.98] text-base"
+                    >
+                        Проверить другой элемент
+                    </button>
+                </Tooltip>
             </div>
         );
     }

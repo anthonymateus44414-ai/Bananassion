@@ -10,7 +10,8 @@ import {
     UndoIcon, RedoIcon, ArrowCounterclockwiseIcon, XCircleIcon,
     SunIcon, SparklesIcon, BullseyeIcon, PencilSquareIcon, UserCircleIcon,
     PhotoIcon, TshirtIcon, UserPlusIcon, CubeTransparentIcon, ArrowsPointingOutIcon,
-    CameraIcon, PaintBrushIcon
+    CameraIcon, PaintBrushIcon, PaletteIcon, SwatchIcon, FaceSmileIcon, MagicWandIcon,
+    LayersIcon, TransformIcon
 } from './icons.tsx';
 import Tooltip from './Tooltip.tsx';
 import Spinner from './Spinner.tsx';
@@ -30,6 +31,8 @@ interface LayersPanelProps {
   onRedo: () => void;
   hasUndo: boolean;
   hasRedo: boolean;
+  selectedLayerId: string | null;
+  onSelectLayer: (id: string) => void;
 }
 
 const getToolIcon = (tool: Tool) => {
@@ -46,6 +49,13 @@ const getToolIcon = (tool: Tool) => {
         case 'expand': return <ArrowsPointingOutIcon className="w-5 h-5" />;
         case 'camera': return <CameraIcon className="w-5 h-5" />;
         case 'style': return <PaintBrushIcon className="w-5 h-5" />;
+        case 'filter': return <PaletteIcon className="w-5 h-5" />;
+        case 'color': return <SwatchIcon className="w-5 h-5" />;
+        case 'facial': return <FaceSmileIcon className="w-5 h-5" />;
+        case 'mix': return <LayersIcon className="w-5 h-5" />;
+        case 'magicEraser': return <MagicWandIcon className="w-5 h-5" />;
+        case 'image': return <PhotoIcon className="w-5 h-5" />;
+        case 'transform': return <TransformIcon className="w-5 h-5" />;
         default: return <div className="w-5 h-5" />; // Placeholder
     }
 }
@@ -65,6 +75,8 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
   onRedo,
   hasUndo,
   hasRedo,
+  selectedLayerId,
+  onSelectLayer,
 }) => {
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
@@ -128,6 +140,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                     {reversedLayers.map((layer, index) => {
                         const originalIndex = layers.length - 1 - index;
                         const isProcessing = loadingLayerId === layer.id;
+                        const isSelected = selectedLayerId === layer.id;
                         
                         return (
                            <React.Fragment key={layer.id}>
@@ -138,7 +151,8 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                     onDragEnter={() => handleDragEnter(originalIndex)}
                                     onDragOver={(e) => e.preventDefault()}
                                     onDragEnd={handleDragEnd}
-                                    className={`flex items-center gap-3 p-2 cursor-grab transition-all duration-200 rounded-lg border-2 ${isProcessing ? 'bg-blue-100 border-primary animate-pulse' : 'bg-gray-50 border-transparent'} ${!layer.isVisible ? 'opacity-60' : ''}`}
+                                    onClick={() => onSelectLayer(layer.id)}
+                                    className={`flex items-center gap-3 p-2 cursor-pointer transition-all duration-200 rounded-lg border-2 ${isProcessing ? 'bg-blue-100 border-primary animate-pulse' : isSelected ? 'bg-blue-50 border-primary' : 'bg-gray-50 border-transparent'} ${!layer.isVisible ? 'opacity-60' : ''}`}
                                 >
                                     <div className="w-10 h-10 bg-gray-200 rounded-md flex-shrink-0 overflow-hidden border border-border-color">
                                         {layer.cachedResult ? (
@@ -154,12 +168,12 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                                         <span className="text-sm font-bold text-text-primary truncate">{layer.name}</span>
                                     </div>
                                     <Tooltip side="left" text={layer.isVisible ? "Скрыть слой" : "Показать слой"}>
-                                        <button onClick={() => onToggleVisibility(layer.id)} className="p-1 text-text-secondary hover:text-text-primary rounded-full hover:bg-gray-200">
+                                        <button onClick={(e) => { e.stopPropagation(); onToggleVisibility(layer.id); }} className="p-1 text-text-secondary hover:text-text-primary rounded-full hover:bg-gray-200">
                                             {layer.isVisible ? <EyeIcon className="w-5 h-5" /> : <EyeSlashIcon className="w-5 h-5" />}
                                         </button>
                                     </Tooltip>
                                     <Tooltip side="left" text="Удалить слой">
-                                        <button onClick={() => onRemoveLayer(layer.id)} className="p-1 text-text-secondary hover:text-red-500 rounded-full hover:bg-red-100">
+                                        <button onClick={(e) => { e.stopPropagation(); onRemoveLayer(layer.id); }} className="p-1 text-text-secondary hover:text-red-500 rounded-full hover:bg-red-100">
                                             <TrashIcon className="w-5 h-5" />
                                         </button>
                                     </Tooltip>

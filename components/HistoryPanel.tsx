@@ -6,6 +6,7 @@
 import React from 'react';
 import { Layer } from '../types';
 import { UndoIcon } from './icons';
+import Tooltip from './Tooltip.tsx';
 
 interface HistoryState {
     past: Layer[][];
@@ -62,12 +63,14 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ history, onJumpToState }) =
                         
                         return (
                             <li key={`future-${i}`}>
-                                <button
-                                    onClick={() => onJumpToState(historyIndex)}
-                                    className="w-full text-left p-3 rounded-lg transition-colors text-text-secondary italic hover:bg-gray-100"
-                                >
-                                    {name}
-                                </button>
+                                <Tooltip text="Вернуться к этому состоянию в истории">
+                                    <button
+                                        onClick={() => onJumpToState(historyIndex)}
+                                        className="w-full text-left p-3 rounded-lg transition-colors text-text-secondary italic hover:bg-gray-100"
+                                    >
+                                        {name}
+                                    </button>
+                                </Tooltip>
                             </li>
                         );
                     })}
@@ -81,19 +84,21 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ history, onJumpToState }) =
 
                         return (
                             <li key={`past-${historyIndex}`}>
-                                <button
-                                    onClick={() => onJumpToState(historyIndex)}
-                                    className={`w-full text-left p-3 rounded-lg transition-colors border-2 ${
-                                        isPresent
-                                            ? 'bg-blue-100 border-primary text-primary font-bold'
-                                            : 'bg-gray-50 border-transparent text-text-primary font-medium hover:bg-gray-100'
-                                    }`}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        {isPresent && <UndoIcon className="w-5 h-5 flex-shrink-0 transform rotate-180" />}
-                                        <span className="truncate">{name}</span>
-                                    </div>
-                                </button>
+                                <Tooltip text="Вернуться к этому состоянию в истории">
+                                    <button
+                                        onClick={() => onJumpToState(historyIndex)}
+                                        className={`w-full text-left p-3 rounded-lg transition-colors border-2 ${
+                                            isPresent
+                                                ? 'bg-blue-100 border-primary text-primary font-bold'
+                                                : 'bg-gray-50 border-transparent text-text-primary font-medium hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            {isPresent && <UndoIcon className="w-5 h-5 flex-shrink-0 transform rotate-180" />}
+                                            <span className="truncate">{name}</span>
+                                        </div>
+                                    </button>
+                                </Tooltip>
                             </li>
                         );
                     })}

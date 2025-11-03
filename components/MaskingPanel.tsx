@@ -78,16 +78,18 @@ const MaskingPanel: React.FC<MaskingPanelProps> = ({
                     ></div>
                 </div>
             </div>
-            <input
-                id="brush-size"
-                type="range"
-                min="5"
-                max="100"
-                value={brushSize}
-                onChange={handleSizeChange}
-                disabled={isLoading}
-                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
-            />
+            <Tooltip side="left" text="Настройте размер кисти для рисования или стирания маски.">
+                <input
+                    id="brush-size"
+                    type="range"
+                    min="5"
+                    max="100"
+                    value={brushSize}
+                    onChange={handleSizeChange}
+                    disabled={isLoading}
+                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                />
+            </Tooltip>
         </div>
 
         {/* Brush Hardness Slider */}
@@ -95,17 +97,19 @@ const MaskingPanel: React.FC<MaskingPanelProps> = ({
             <label htmlFor="brush-hardness" className="text-sm font-semibold w-full text-left">
                 Жесткость кисти: {Math.round(brushHardness * 100)}%
             </label>
-            <input
-                id="brush-hardness"
-                type="range"
-                min="0.1"
-                max="1.0"
-                step="0.05"
-                value={brushHardness}
-                onChange={handleHardnessChange}
-                disabled={isLoading || brushShape === 'square'}
-                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
-            />
+            <Tooltip side="left" text="Настройте мягкость краев кисти. Доступно только для круглой кисти.">
+                <input
+                    id="brush-hardness"
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    value={brushHardness}
+                    onChange={handleHardnessChange}
+                    disabled={isLoading || brushShape === 'square'}
+                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                />
+            </Tooltip>
         </div>
 
         {/* Opacity Slider */}
@@ -113,17 +117,19 @@ const MaskingPanel: React.FC<MaskingPanelProps> = ({
             <label htmlFor="preview-opacity" className="text-sm font-semibold w-full text-left">
             Прозрачность предпросмотра: {Math.round(previewOpacity * 100)}%
             </label>
-            <input
-                id="preview-opacity"
-                type="range"
-                min="0.1"
-                max="1.0"
-                step="0.05"
-                value={previewOpacity}
-                onChange={handleOpacityChange}
-                disabled={isLoading}
-                className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
-            />
+            <Tooltip side="left" text="Настройте прозрачность предпросмотра маски на холсте.">
+                <input
+                    id="preview-opacity"
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    value={previewOpacity}
+                    onChange={handleOpacityChange}
+                    disabled={isLoading}
+                    className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer"
+                />
+            </Tooltip>
         </div>
 
         {/* Brush Shape Selection */}

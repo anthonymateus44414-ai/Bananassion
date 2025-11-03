@@ -3,34 +3,40 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useState } from 'react';
-
-// Import all panels
-import AdjustmentPanel from './AdjustmentPanel.tsx';
-import RetouchPanel from './RetouchPanel.tsx';
-import TextEditPanel from './TextEditPanel.tsx';
-import FaceSwapPanel from './FaceSwapPanel.tsx';
-import BackgroundPanel from './BackgroundPanel.tsx';
-import ClothingPanel from './ClothingPanel.tsx';
-import AddPersonPanel from './AddPersonPanel.tsx';
-import AddObjectPanel from './AddObjectPanel.tsx';
-import EnhancePanel from './EnhancePanel.tsx';
-import ExpandPanel from './ExpandPanel.tsx';
-import AnglePanel from './AnglePanel.tsx';
-import StylePanel from './StylePanel.tsx';
-import LayersPanel from './LayersPanel.tsx';
-import TranscribePanel from './TranscribePanel.tsx';
-import MaskingPanel from './MaskingPanel.tsx';
-import HistoryPanel from './HistoryPanel.tsx';
-import FilterPanel from './FilterPanel.tsx';
-import ColorPanel from './ColorPanel.tsx';
-import FacialPanel from './FacialPanel.tsx';
-import MixPanel from './MixPanel.tsx';
-import MagicEraserPanel from './MagicEraserPanel.tsx';
-
+import React, { useState, lazy, Suspense } from 'react';
 
 // Import types
 import { Tool, Layer, Hotspot, CustomStyle, DetectedObject, BrushShape } from '../types.ts';
+import Spinner from './Spinner.tsx';
+import Tooltip from './Tooltip.tsx';
+
+// Lazy load all panels for performance optimization
+const AdjustmentPanel = lazy(() => import('./AdjustmentPanel.tsx'));
+const RetouchPanel = lazy(() => import('./RetouchPanel.tsx'));
+const TextEditPanel = lazy(() => import('./TextEditPanel.tsx'));
+const FaceSwapPanel = lazy(() => import('./FaceSwapPanel.tsx'));
+const BackgroundPanel = lazy(() => import('./BackgroundPanel.tsx'));
+const ClothingPanel = lazy(() => import('./ClothingPanel.tsx'));
+const AddPersonPanel = lazy(() => import('./AddPersonPanel.tsx'));
+const AddObjectPanel = lazy(() => import('./AddObjectPanel.tsx'));
+const EnhancePanel = lazy(() => import('./EnhancePanel.tsx'));
+const ExpandPanel = lazy(() => import('./ExpandPanel.tsx'));
+const AnglePanel = lazy(() => import('./AnglePanel.tsx'));
+const StylePanel = lazy(() => import('./StylePanel.tsx'));
+const TranscribePanel = lazy(() => import('./TranscribePanel.tsx'));
+const MaskingPanel = lazy(() => import('./MaskingPanel.tsx'));
+const FilterPanel = lazy(() => import('./FilterPanel.tsx'));
+const ColorPanel = lazy(() => import('./ColorPanel.tsx'));
+const FacialPanel = lazy(() => import('./FacialPanel.tsx'));
+const MixPanel = lazy(() => import('./MixPanel.tsx'));
+const MagicEraserPanel = lazy(() => import('./MagicEraserPanel.tsx'));
+const AddImagePanel = lazy(() => import('./AddImagePanel.tsx'));
+const TransformPanel = lazy(() => import('./TransformPanel.tsx'));
+
+// Eager load core sidebar panels
+import LayersPanel from './LayersPanel.tsx';
+import HistoryPanel from './HistoryPanel.tsx';
+
 
 interface HistoryState {
     past: Layer[][];
@@ -61,6 +67,8 @@ interface RightSidebarProps {
     colorAdjustments: { hue: number; saturation: number; brightness: number; };
     detectedObjects: DetectedObject[] | null;
     selectedObjectMasks: string[];
+    cameraFocusPoint: Hotspot | null;
+    selectedLayer: Layer | null;
 
     // Handlers
     onAddLayer: (layer: Omit<Layer, 'id' | 'isVisible' | 'cachedResult'>) => void;
@@ -89,6 +97,8 @@ interface RightSidebarProps {
     onObjectMaskToggle: (maskUrl: string) => void;
     onClearObjects: () => void;
     onConfirmSelection: () => void;
+    onSelectLayer: (id: string) => void;
+    onUpdateLayerTransform: (layerId: string, newTransform: Layer['transform']) => void;
 }
 
 const RightSidebar: React.FC<RightSidebarProps> = (props) => {
@@ -124,7 +134,7 @@ const RightSidebar: React.FC<RightSidebarProps> = (props) => {
             case 'addObject': return <AddObjectPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} editHotspot={props.editHotspot} />;
             case 'enhance': return <EnhancePanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} editHotspot={props.editHotspot} />;
             case 'expand': return <ExpandPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
-            case 'camera': return <AnglePanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
+            case 'camera': return <AnglePanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} cameraFocusPoint={props.cameraFocusPoint} />;
             case 'style': return <StylePanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
             case 'transcribe': return <TranscribePanel 
                 isRecording={props.isRecording}
@@ -158,38 +168,56 @@ const RightSidebar: React.FC<RightSidebarProps> = (props) => {
                 onConfirmSelection={props.onConfirmSelection}
                 onObjectMaskToggle={props.onObjectMaskToggle}
             />;
+            case 'image': return <AddImagePanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
+            case 'transform': return <TransformPanel selectedLayer={props.selectedLayer} onUpdateTransform={props.onUpdateLayerTransform} isLoading={props.isLoading} />;
             default: return <div className="p-4"><p>Select a tool</p></div>;
         }
     };
 
     const toolPanelHeader = props.isMasking ? "Режим маски" : "Параметры инструмента";
+    const suspenseFallback = (
+        <div className="w-full h-full flex items-center justify-center p-4">
+            <div className="flex flex-col items-center gap-4">
+                <Spinner />
+                <span className="text-text-secondary font-semibold">Загрузка инструмента...</span>
+            </div>
+        </div>
+    );
 
     return (
         <div className="w-96 flex-shrink-0 bg-bg-panel border-l border-border-color flex flex-col overflow-hidden">
             <div className="flex-shrink-0 border-b border-border-color flex">
-                <button
-                    onClick={() => setActiveTab('tool')}
-                    className={`flex-1 font-bold py-3 px-4 transition-colors duration-200 text-center ${activeTab === 'tool' ? 'bg-blue-50 text-primary border-b-2 border-primary' : 'text-text-secondary hover:bg-gray-50'}`}
-                >
-                    {toolPanelHeader}
-                </button>
-                <button
-                    onClick={() => setActiveTab('layers')}
-                    className={`flex-1 font-bold py-3 px-4 transition-colors duration-200 text-center ${activeTab === 'layers' ? 'bg-blue-50 text-primary border-b-2 border-primary' : 'text-text-secondary hover:bg-gray-50'}`}
-                >
-                    Слои
-                </button>
-                <button
-                    onClick={() => setActiveTab('history')}
-                    className={`flex-1 font-bold py-3 px-4 transition-colors duration-200 text-center ${activeTab === 'history' ? 'bg-blue-50 text-primary border-b-2 border-primary' : 'text-text-secondary hover:bg-gray-50'}`}
-                >
-                    История
-                </button>
+                <Tooltip text="Показать параметры для текущего выбранного инструмента">
+                    <button
+                        onClick={() => setActiveTab('tool')}
+                        className={`flex-1 font-bold py-3 px-4 transition-colors duration-200 text-center ${activeTab === 'tool' ? 'bg-blue-50 text-primary border-b-2 border-primary' : 'text-text-secondary hover:bg-gray-50'}`}
+                    >
+                        {toolPanelHeader}
+                    </button>
+                </Tooltip>
+                <Tooltip text="Управление слоями редактирования, видимостью и порядком">
+                    <button
+                        onClick={() => setActiveTab('layers')}
+                        className={`flex-1 font-bold py-3 px-4 transition-colors duration-200 text-center ${activeTab === 'layers' ? 'bg-blue-50 text-primary border-b-2 border-primary' : 'text-text-secondary hover:bg-gray-50'}`}
+                    >
+                        Слои
+                    </button>
+                </Tooltip>
+                <Tooltip text="Просмотр истории действий и возврат к предыдущим состояниям">
+                    <button
+                        onClick={() => setActiveTab('history')}
+                        className={`flex-1 font-bold py-3 px-4 transition-colors duration-200 text-center ${activeTab === 'history' ? 'bg-blue-50 text-primary border-b-2 border-primary' : 'text-text-secondary hover:bg-gray-50'}`}
+                    >
+                        История
+                    </button>
+                </Tooltip>
             </div>
 
             {activeTab === 'tool' && (
                 <div className="flex-grow overflow-y-auto p-4">
-                    {renderToolPanel()}
+                    <Suspense fallback={suspenseFallback}>
+                        {renderToolPanel()}
+                    </Suspense>
                 </div>
             )}
             {activeTab === 'layers' && (
@@ -208,6 +236,8 @@ const RightSidebar: React.FC<RightSidebarProps> = (props) => {
                     onRedo={props.onRedo}
                     hasUndo={props.history.past.length > 0}
                     hasRedo={props.hasRedo}
+                    selectedLayerId={props.selectedLayer?.id || null}
+                    onSelectLayer={props.onSelectLayer}
                 />
             )}
              {activeTab === 'history' && (

@@ -259,17 +259,19 @@ const BatchEditor: React.FC<{ files: File[]; onExit: () => void; }> = ({ files, 
                                 ))}
                             </ul>
                         )}
-                        <button 
-                            onClick={handleStartProcessing} 
-                            disabled={isProcessing || recipe.length === 0}
-                            className="w-full mt-4 bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-3"
-                        >
-                            <SparklesIcon className="w-6 h-6" />
-                            {isProcessing 
-                                ? <span className="truncate">Изобр. {progress.currentImage}/{progress.totalImages}: {progress.currentStep}</span>
-                                : `Применить рецепт к ${images.length} изобр.`
-                            }
-                        </button>
+                        <Tooltip text="Начать обработку всех изображений с использованием текущего рецепта">
+                            <button 
+                                onClick={handleStartProcessing} 
+                                disabled={isProcessing || recipe.length === 0}
+                                className="w-full mt-4 bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                            >
+                                <SparklesIcon className="w-6 h-6" />
+                                {isProcessing 
+                                    ? <span className="truncate">Изобр. {progress.currentImage}/{progress.totalImages}: {progress.currentStep}</span>
+                                    : `Применить рецепт к ${images.length} изобр.`
+                                }
+                            </button>
+                        </Tooltip>
                         
                         { (isSuggestionLoading || (suggestions.length > 0 && showSuggestions)) && (
                             <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg animate-fade-in relative transition-all">
