@@ -52,13 +52,13 @@ export type AddObjectLayerParams = {
     shadows?: string;
 };
 export type EnhanceLayerParams = { prompt?: string; hotspot?: Hotspot };
-export type ExpandLayerParams = { direction?: 'up' | 'down' | 'left' | 'right'; percentage: number };
+export type ExpandLayerParams = { direction?: 'up' | 'down' | 'left' | 'right'; percentage: number; prompt?: string };
 export type CameraLayerParams = { prompt: string; hotspot?: Hotspot };
 export type StyleLayerParams = { referenceImages: string[] };
 export type FilterLayerParams = { prompt: string };
 export type ColorLayerParams = { prompt: string; mask: string | null };
 export type FacialLayerParams = { prompt: string; mask: string };
-export type MagicEraserLayerParams = { mask: string; fillPrompt: string | null };
+export type MagicEraserLayerParams = { mask: string; fillPrompt: string | null; editMode?: boolean };
 export type MixLayerParams = { itemDataUrls: string[]; prompt: string };
 export type ImageLayerParams = { imageDataUrl: string; };
 export type TransformLayerParams = {}; // No specific params, uses layer's top-level transform
@@ -111,6 +111,7 @@ export interface CustomStyle {
     files: string[];
 }
 
+// FIX: Removed duplicate 'export' keyword.
 export interface FilterSuggestion {
   name: string;
   prompt: string;

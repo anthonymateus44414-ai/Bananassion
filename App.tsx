@@ -20,7 +20,7 @@ import Konva from 'konva';
 import { XCircleIcon } from './components/icons.tsx';
 
 // --- State Management: History Reducer ---
-type HistoryState = { past: Layer[][]; present: Layer[]; future: Layer[][]; };
+type HistoryState = { past: Layer[][]; present: Layer[]; future: Layer[][]; lastActionType?: HistoryAction['type'] };
 type LayerAction =
     | { type: 'ADD'; payload: Omit<Layer, 'id' | 'isVisible' | 'cachedResult'> }
     | { type: 'REMOVE'; payload: { layerId: string } }
@@ -28,6 +28,7 @@ type LayerAction =
     | { type: 'TOGGLE_VISIBILITY'; payload: { layerId: string } }
     | { type: 'UPDATE_CACHED_RESULT'; payload: { layerId: string; cachedResult: string | null } }
     | { type: 'UPDATE_LAYER'; payload: { layer: Layer } }
+    | { type: 'UPDATE_LAYER_TRANSFORM'; payload: { layer: Layer } }
     | { type: 'CLEAR_VISIBLE_CACHE' };
 type HistoryAction = LayerAction | { type: 'UNDO' } | { type: 'REDO' } | { type: 'SET_HISTORY'; payload: HistoryState } | { type: 'JUMP_TO_STATE'; payload: { index: number } };
 
@@ -56,7 +57,9 @@ const layersReducer = (state: Layer[], action: LayerAction): Layer[] => {
             });
         }
         case 'UPDATE_CACHED_RESULT': return state.map(l => l.id === action.payload.layerId ? { ...l, cachedResult: action.payload.cachedResult ?? undefined } : l);
-        case 'UPDATE_LAYER': return state.map(l => l.id === action.payload.layer.id ? action.payload.layer : l);
+        case 'UPDATE_LAYER': // fall-through
+        case 'UPDATE_LAYER_TRANSFORM':
+             return state.map(l => l.id === action.payload.layer.id ? action.payload.layer : l);
         case 'CLEAR_VISIBLE_CACHE': return state.map(l => l.isVisible && l.cachedResult ? { ...l, cachedResult: undefined } : l);
         default: return state;
     }
@@ -66,29 +69,65 @@ const historyReducer = (state: HistoryState, action: HistoryAction): HistoryStat
     switch (action.type) {
         case 'UNDO':
             if (past.length === 0) return state;
-            return { past: past.slice(0, -1), present: past[past.length - 1], future: [present, ...future] };
+            return {
+                past: past.slice(0, -1),
+                present: past[past.length - 1],
+                future: [present, ...future],
+                lastActionType: 'UNDO'
+            };
         case 'REDO':
             if (future.length === 0) return state;
-            return { past: [...past, present], present: future[0], future: future.slice(1) };
-        case 'SET_HISTORY': return action.payload;
+            return {
+                past: [...past, present],
+                present: future[0],
+                future: future.slice(1),
+                lastActionType: 'REDO'
+            };
+        case 'SET_HISTORY': return { ...action.payload, lastActionType: 'SET_HISTORY' };
         case 'JUMP_TO_STATE': {
             const all = [...past, present, ...future];
             const { index } = action.payload;
             if (index < 0 || index >= all.length) return state;
-            return { past: all.slice(0, index), present: all[index], future: all.slice(index + 1) };
+            return {
+                past: all.slice(0, index),
+                present: all[index],
+                future: all.slice(index + 1),
+                lastActionType: 'JUMP_TO_STATE'
+            };
         }
         case 'UPDATE_CACHED_RESULT': return { ...state, present: layersReducer(present, action) };
+        case 'UPDATE_LAYER_TRANSFORM': {
+            const newPresent = layersReducer(present, action);
+            if (newPresent === present) return state;
+            
+            if (state.lastActionType === 'UPDATE_LAYER_TRANSFORM') {
+                // If the last action was also a transform, just update the present state
+                // without creating a new history entry. This groups transform operations.
+                return { ...state, present: newPresent, lastActionType: 'UPDATE_LAYER_TRANSFORM' };
+            } else {
+                // This is the first transform action in a sequence.
+                // Create a history entry *before* updating the present state.
+                return {
+                    past: [...past, present],
+                    present: newPresent,
+                    future: [],
+                    lastActionType: 'UPDATE_LAYER_TRANSFORM',
+                };
+            }
+        }
         default:
             const newPresent = layersReducer(present, action as LayerAction);
             if (newPresent === present) return state;
-            // For non-destructive updates like transform, don't create a new history state
-            if ((action as LayerAction).type === 'UPDATE_LAYER' && (action as any).payload.layer.tool === 'image') {
-                return { ...state, present: newPresent };
-            }
-            return { past: [...past, present], present: newPresent, future: [] };
+            
+            return {
+                past: [...past, present],
+                present: newPresent,
+                future: [],
+                lastActionType: action.type
+            };
     }
 };
-const initialHistory: HistoryState = { past: [], present: [], future: [] };
+const initialHistory: HistoryState = { past: [], present: [], future: [], lastActionType: undefined };
 
 // --- Custom Hooks for Logic Abstraction ---
 
@@ -102,13 +141,14 @@ const useLayerHistory = () => {
     const toggleVisibility = useCallback((layerId: string) => dispatch({ type: 'TOGGLE_VISIBILITY', payload: { layerId } }), []);
     const updateCachedResult = useCallback((layerId: string, cachedResult: string | null) => dispatch({ type: 'UPDATE_CACHED_RESULT', payload: { layerId, cachedResult } }), []);
     const updateLayer = useCallback((layer: Layer) => dispatch({ type: 'UPDATE_LAYER', payload: { layer } }), []);
+    const updateLayerTransform = useCallback((layer: Layer) => dispatch({ type: 'UPDATE_LAYER_TRANSFORM', payload: { layer } }), []);
     const clearVisibleCache = useCallback(() => dispatch({ type: 'CLEAR_VISIBLE_CACHE' }), []);
     const undo = useCallback(() => dispatch({ type: 'UNDO' }), []);
     const redo = useCallback(() => dispatch({ type: 'REDO' }), []);
     const setHistory = useCallback((payload: HistoryState) => dispatch({ type: 'SET_HISTORY', payload }), []);
     const jumpToState = useCallback((index: number) => dispatch({ type: 'JUMP_TO_STATE', payload: { index } }), []);
 
-    return { history, layers, hasUndo: past.length > 0, hasRedo: future.length > 0, addLayer, removeLayer, reorderLayers, toggleVisibility, updateCachedResult, updateLayer, clearVisibleCache, undo, redo, setHistory, jumpToState };
+    return { history, layers, hasUndo: past.length > 0, hasRedo: future.length > 0, addLayer, removeLayer, reorderLayers, toggleVisibility, updateCachedResult, updateLayer, updateLayerTransform, clearVisibleCache, undo, redo, setHistory, jumpToState };
 };
 
 const useLayerProcessor = (baseImage: File | null, layers: Layer[], isFastMode: boolean, updateCachedResult: (id: string, url: string | null) => void) => {
@@ -123,7 +163,6 @@ const useLayerProcessor = (baseImage: File | null, layers: Layer[], isFastMode: 
         
         switch (tool) {
             case 'adjust': return geminiService.generateAdjustedImage(inputFile, (typedParams as any).prompt);
-            case 'retouch': return geminiService.generateEditedImage(inputFile, (typedParams as any).prompt, await dataURLtoFile((typedParams as any).mask, 'mask.png'));
             case 'textEdit': return geminiService.generateTextEdit(inputFile, (typedParams as any).prompt);
             case 'faceSwap': {
                 const p = typedParams as any;
@@ -159,8 +198,8 @@ const useLayerProcessor = (baseImage: File | null, layers: Layer[], isFastMode: 
             }
             case 'expand': {
                 const p = typedParams as any;
-                if (p.direction) return geminiService.generateExpandedImage(inputFile, p.direction, p.percentage);
-                return geminiService.generateUncroppedImage(inputFile, p.percentage);
+                if (p.direction) return geminiService.generateExpandedImage(inputFile, p.direction, p.percentage, p.prompt);
+                return geminiService.generateUncroppedImage(inputFile, p.percentage, p.prompt);
             }
             case 'camera': return geminiService.generateNewAngleImage(inputFile, (typedParams as any).prompt, (typedParams as any).hotspot);
             case 'style': {
@@ -174,7 +213,10 @@ const useLayerProcessor = (baseImage: File | null, layers: Layer[], isFastMode: 
                 return geminiService.generateColorAdjustedImage(inputFile, p.prompt);
             }
             case 'facial': return geminiService.generateEditedImage(inputFile, (typedParams as any).prompt, await dataURLtoFile((typedParams as any).mask, 'mask.png'));
-            case 'magicEraser': return geminiService.generateInpaintedImage(inputFile, await dataURLtoFile((typedParams as any).mask, 'mask.png'), (typedParams as any).fillPrompt);
+            case 'magicEraser': {
+                const p = typedParams as any;
+                return geminiService.generateInpaintedImage(inputFile, await dataURLtoFile(p.mask, 'mask.png'), p.fillPrompt, p.editMode);
+            }
             case 'mix': {
                 const items = await Promise.all((typedParams as any).itemDataUrls.map((url: string, i: number) => dataURLtoFile(url, `mix${i}.png`)));
                 return geminiService.generateMixedImage(inputFile, items, (typedParams as any).prompt);
@@ -346,7 +388,7 @@ const App: React.FC = () => {
     const [activeTool, setActiveTool] = useState<Tool>('adjust');
     const [isFastMode, setIsFastMode] = useState(true);
     
-    const { history, layers, hasUndo, hasRedo, addLayer, removeLayer, reorderLayers, toggleVisibility, updateCachedResult, updateLayer, clearVisibleCache, undo, redo, setHistory, jumpToState } = useLayerHistory();
+    const { history, layers, hasUndo, hasRedo, addLayer, removeLayer, reorderLayers, toggleVisibility, updateCachedResult, updateLayer, updateLayerTransform, clearVisibleCache, undo, redo, setHistory, jumpToState } = useLayerHistory();
     const baseImage = imageFiles.length > 0 ? imageFiles[0] : null;
     // FIX: Destructure setIsLoading and setLoadingMessage to make them available in the component scope.
     const { isLoading, setIsLoading, loadingMessage, setLoadingMessage, error, setError } = useLayerProcessor(baseImage, layers, isFastMode, updateCachedResult);
@@ -382,7 +424,7 @@ const App: React.FC = () => {
 
     const resetState = useCallback((keepImage = false) => {
         if (!keepImage) setImageFiles([]);
-        setHistory({ past: [], present: [], future: [] });
+        setHistory({ past: [], present: [], future: [], lastActionType: undefined });
         setError(null);
         setActiveTool('adjust');
         setEditHotspot(null);
@@ -400,9 +442,9 @@ const App: React.FC = () => {
     const handleUpdateLayerTransform = useCallback((layerId: string, newTransform: Layer['transform']) => {
         const layerToUpdate = layers.find(l => l.id === layerId);
         if (layerToUpdate) {
-            updateLayer({ ...layerToUpdate, transform: newTransform });
+            updateLayerTransform({ ...layerToUpdate, transform: newTransform });
         }
-    }, [layers, updateLayer]);
+    }, [layers, updateLayerTransform]);
 
     const handleStartOver = useCallback(() => { if(window.confirm("Вы уверены?")) resetState(); }, [resetState]);
     const handleRevertAll = useCallback(() => { if (window.confirm("Вы уверены, что хотите отменить все изменения?")) resetState(true); }, [resetState]);

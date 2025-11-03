@@ -169,7 +169,17 @@ export const generateImageFromPrompt = (prompt: string): Promise<string> => {
 export const generateEditedImage = (originalImage: File, userPrompt: string, maskImage: File): Promise<string> => {
     return executeApiCall('edit', async () => {
         const maskImagePart = await fileToPart(maskImage);
-        const prompt = `You are given an image and a mask. Perform the following edit on the image: "${userPrompt}". Apply the edit ONLY to the white areas of the mask. Black areas must remain unchanged. Ensure a photorealistic and seamless blend. Output only the final image.`;
+        const prompt = `# TASK: Masked Image Retouching
+You are an expert AI photo editor. You are given an image, a mask, and a user instruction.
+
+# INSTRUCTION
+Perform the following edit: "${userPrompt}"
+
+# RULES
+1.  **Strict Mask Adherence:** Apply the edit ONLY to the white areas of the mask. The black areas of the mask MUST remain completely unchanged.
+2.  **Seamless Integration:** The edited area must blend perfectly with the surrounding image. Match the original lighting, shadows, textures, grain, and perspective precisely.
+3.  **Photorealism:** The result must be photorealistic and indistinguishable from a real photograph.
+4.  **Output:** Output ONLY the final, edited image. Do not output text or explanations.`;
         return generateImageModification('edit', originalImage, [{ text: prompt }, maskImagePart]);
     });
 };
@@ -179,13 +189,29 @@ export const generateTextEdit = (originalImage: File, prompt: string): Promise<s
     return generateImageModification('text edit', originalImage, [{ text: fullPrompt }]);
 };
 
-export const generateInpaintedImage = (originalImage: File, maskImage: File, fillPrompt?: string): Promise<string> => {
-    const context = fillPrompt ? 'generative fill' : 'magic eraser';
+export const generateInpaintedImage = (originalImage: File, maskImage: File, fillPrompt?: string, editMode: boolean = false): Promise<string> => {
+    const context = fillPrompt ? (editMode ? 'magic edit' : 'generative fill') : 'magic eraser';
     return executeApiCall(context, async () => {
         const maskImagePart = await fileToPart(maskImage);
-        const prompt = fillPrompt
-          ? `# TASK: Generative Fill
-You are provided an image, a mask, and a prompt. Replace the content within the white area of the mask with a new image generated from the following description.
+        let prompt = '';
+        
+        if (fillPrompt) {
+            if (editMode) {
+                prompt = `# TASK: Masked Image Modification
+You are an expert AI photo editor. You are given an image, a mask, and a user instruction. Your task is to **modify** the content within the white area of the mask according to the instruction.
+
+# INSTRUCTION
+"${fillPrompt}"
+
+# RULES
+1.  **Preserve Form:** Do not replace the object entirely. Modify its existing features (color, texture, details) as instructed. Preserve the object's underlying shape and form.
+2.  **Strict Mask Adherence:** Apply the edit ONLY to the white areas of the mask. The black areas MUST remain unchanged.
+3.  **Seamless Integration:** The edited area must blend perfectly with the surrounding image. Match the original lighting, shadows, grain, and perspective.
+4.  **Photorealism:** The result must be photorealistic.
+5.  **Output:** Output ONLY the final, edited image.`;
+            } else {
+                prompt = `# TASK: Generative Fill
+You are provided an image, a mask, and a prompt. Replace the content within the white area of the mask with new content generated from the following description.
 
 # PROMPT
 "${fillPrompt}"
@@ -194,8 +220,10 @@ You are provided an image, a mask, and a prompt. Replace the content within the 
 1.  **Seamless Integration:** The generated content must blend perfectly into the original image, matching its lighting, perspective, shadows, and overall style.
 2.  **Context Analysis:** Analyze the entire scene to ensure the generated content is plausible.
 3.  **Boundary Adherence:** Do not change any part of the image outside the masked area.
-4.  **Output:** Output only the final, edited image.`
-          : `# TASK: Object Removal (Inpainting)
+4.  **Output:** Output only the final, edited image.`;
+            }
+        } else {
+            prompt = `# TASK: Object Removal (Inpainting)
 You are provided an image and a mask. The white area of the mask indicates an object to be completely removed. Your task is to perform an inpainting operation.
 
 # RULES
@@ -203,6 +231,7 @@ You are provided an image and a mask. The white area of the mask indicates an ob
 2.  **Pattern/Texture Matching:** Pay close attention to repeating patterns, textures, and lighting gradients in the surrounding area to ensure the filled region is indistinguishable from the original background.
 3.  **Boundary Adherence:** Do not change any part of the image outside the masked area.
 4.  **Output:** Output only the final, edited image.`;
+        }
         
         return generateImageModification(context, originalImage, [{ text: prompt }, maskImagePart]);
     });
@@ -291,19 +320,23 @@ Output ONLY the final, regenerated image.`;
     return generateImageModification('camera angle', originalImage, [{ text: fullPrompt }]);
 };
 
-export const generateExpandedImage = async (originalImage: File, direction: 'up' | 'down' | 'left' | 'right', percentage: number): Promise<string> => {
+export const generateExpandedImage = async (originalImage: File, direction: 'up' | 'down' | 'left' | 'right', percentage: number, prompt?: string): Promise<string> => {
     const { image: expandedImageDataUrl, mask: maskDataUrl } = await createExpandedCanvas(originalImage, direction, percentage);
     const expandedImageFile = dataURLtoFile(expandedImageDataUrl, 'expanded_base.png');
     const maskFile = dataURLtoFile(maskDataUrl, 'expand_mask.png');
-    const fillPrompt = 'a seamless and realistic extension of the existing scene, matching its style, lighting, and perspective.';
+    const fillPrompt = prompt
+        ? `${prompt}, created as a seamless and realistic extension of the existing scene, perfectly matching its style, lighting, and perspective.`
+        : 'a seamless and realistic extension of the existing scene, matching its style, lighting, and perspective.';
     return generateInpaintedImage(expandedImageFile, maskFile, fillPrompt);
 };
 
-export const generateUncroppedImage = async (originalImage: File, percentage: number): Promise<string> => {
+export const generateUncroppedImage = async (originalImage: File, percentage: number, prompt?: string): Promise<string> => {
     const { image: expandedImageDataUrl, mask: maskDataUrl } = await createExpandedCanvas(originalImage, 'all', percentage);
     const expandedImageFile = dataURLtoFile(expandedImageDataUrl, 'uncropped_base.png');
     const maskFile = dataURLtoFile(maskDataUrl, 'uncrop_mask.png');
-    const fillPrompt = 'a seamless and realistic extension of the centered scene on all sides, matching its style, lighting, and perspective.';
+    const fillPrompt = prompt
+        ? `${prompt}, created as a seamless and realistic extension of the centered scene on all sides, perfectly matching its style, lighting, and perspective.`
+        : 'a seamless and realistic extension of the centered scene on all sides, matching its style, lighting, and perspective.';
     return generateInpaintedImage(expandedImageFile, maskFile, fillPrompt);
 };
 

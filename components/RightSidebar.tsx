@@ -12,7 +12,6 @@ import Tooltip from './Tooltip.tsx';
 
 // Lazy load all panels for performance optimization
 const AdjustmentPanel = lazy(() => import('./AdjustmentPanel.tsx'));
-const RetouchPanel = lazy(() => import('./RetouchPanel.tsx'));
 const TextEditPanel = lazy(() => import('./TextEditPanel.tsx'));
 const FaceSwapPanel = lazy(() => import('./FaceSwapPanel.tsx'));
 const BackgroundPanel = lazy(() => import('./BackgroundPanel.tsx'));
@@ -125,7 +124,6 @@ const RightSidebar: React.FC<RightSidebarProps> = (props) => {
 
         switch (props.activeTool) {
             case 'adjust': return <AdjustmentPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
-            case 'retouch': return <RetouchPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} maskDataUrl={props.maskDataUrl} onToggleMasking={props.onToggleMasking} />;
             case 'textEdit': return <TextEditPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
             case 'faceSwap': return <FaceSwapPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;
             case 'background': return <BackgroundPanel onAddLayer={props.onAddLayer} isLoading={props.isLoading} />;

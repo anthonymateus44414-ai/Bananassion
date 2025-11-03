@@ -29,11 +29,11 @@ interface ExpandPanelProps {
   mode?: 'layer' | 'recipe';
 }
 
-type ExpandSize = 25 | 50;
 type Direction = 'up' | 'down' | 'left' | 'right';
 
 const ExpandPanel: React.FC<ExpandPanelProps> = ({ onAddLayer, isLoading, onAddToRecipe, mode = 'layer' }) => {
-  const [expandSize, setExpandSize] = useState<ExpandSize>(25);
+  const [expandSize, setExpandSize] = useState(25);
+  const [prompt, setPrompt] = useState('');
   const [activeAction, setActiveAction] = useState<string | null>(null);
 
 
@@ -62,11 +62,13 @@ const ExpandPanel: React.FC<ExpandPanelProps> = ({ onAddLayer, isLoading, onAddT
   }
 
   const handleDirectionClick = (direction: Direction, name: string) => {
-    handleApply({ direction, percentage: expandSize }, `${name} на ${expandSize}%`);
+    const layerName = `${name} на ${expandSize}%` + (prompt ? ` (${prompt.slice(0, 10)}...)` : '');
+    handleApply({ direction, percentage: expandSize, prompt }, layerName);
   };
 
   const handleUncropClick = () => {
-    handleApply({ percentage: expandSize }, `Раскадрировать на ${expandSize}%`);
+    const layerName = `Раскадрировать на ${expandSize}%` + (prompt ? ` (${prompt.slice(0, 10)}...)` : '');
+    handleApply({ percentage: expandSize, prompt }, layerName);
   };
 
   return (
@@ -76,30 +78,43 @@ const ExpandPanel: React.FC<ExpandPanelProps> = ({ onAddLayer, isLoading, onAddT
       
       <div className="flex flex-col items-center gap-4">
         {/* Size Selection */}
-        <div className="flex items-center gap-2 bg-stone-100 rounded-lg p-1 border border-border-color">
-          <span className="text-sm font-bold text-text-secondary pl-2">Расширить на:</span>
-          {( [25, 50] as ExpandSize[] ).map(size => (
-            <Tooltip side="left" key={size} text={`Расширить на ${size}%`}>
-                <button
-                    onClick={() => setExpandSize(size)}
+        <div className="w-full max-w-sm flex flex-col gap-2 p-3 bg-stone-50 rounded-lg border border-border-color">
+            <label htmlFor="expand-size" className="font-semibold text-center block">
+                Расширить на: <span className="font-bold text-primary">{expandSize}%</span>
+            </label>
+            <Tooltip side="left" text="Выберите, на сколько процентов расширить холст.">
+                <input 
+                    id="expand-size"
+                    type="range"
+                    min="10"
+                    max="100"
+                    step="5"
+                    value={expandSize}
+                    onChange={(e) => setExpandSize(parseInt(e.target.value, 10))}
                     disabled={isLoading}
-                    className={`px-4 py-2 rounded-md text-base font-bold transition-all duration-200 active:scale-[0.98] disabled:opacity-50 ${
-                        expandSize === size 
-                        ? 'bg-primary text-white shadow-sm' 
-                        : 'text-text-secondary hover:text-text-primary'
-                    }`}
-                >
-                    {size}%
-                </button>
+                    className="w-full h-2 bg-border-color rounded-lg appearance-none cursor-pointer"
+                />
             </Tooltip>
-          ))}
+        </div>
+
+        <div className="w-full max-w-sm flex flex-col gap-2">
+            <Tooltip side="left" text="Необязательно: опишите, что добавить в новую область (например, 'добавить маяк вдалеке')">
+                <input
+                    type="text"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Подсказка для содержимого (необязательно)..."
+                    className="flex-grow bg-stone-50 border-2 border-border-color text-text-primary rounded-lg p-3 focus:ring-2 ring-primary focus:outline-none transition w-full disabled:cursor-not-allowed disabled:opacity-60 text-base font-medium"
+                    disabled={isLoading}
+                />
+            </Tooltip>
         </div>
 
         <Tooltip side="left" text={`Генеративно заполнить все стороны изображения, расширив его на ${expandSize}%`}>
             <button
                 onClick={handleUncropClick}
                 disabled={isLoading}
-                className="w-full max-w-sm mt-2 bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-3 h-[52px]"
+                className="w-full max-w-sm bg-primary text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 ease-in-out hover:bg-primary-hover active:scale-[0.98] text-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-3 h-[52px]"
             >
                 {isLoading && activeAction?.includes('Uncrop') ? <Spinner size="sm" /> : <><ArrowsPointingOutIcon className="w-6 h-6" /> Раскадрировать</>}
             </button>

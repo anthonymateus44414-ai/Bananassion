@@ -4,9 +4,9 @@
 */
 
 import React from 'react';
-import { Tool } from '../types';
-import { ScissorsIcon, ArrowsPointingOutIcon, CameraIcon, BrainCircuitIcon, PaletteIcon, SunIcon, SwatchIcon, SparklesIcon, BullseyeIcon, FaceSmileIcon, MagicWandIcon, PhotoIcon, TshirtIcon, LayersIcon, UserCircleIcon, UserPlusIcon, CubeTransparentIcon, VideoCameraIcon, MicrophoneIcon, PaintBrushIcon, PencilSquareIcon, DocumentDuplicateIcon, TransformIcon, CodeBracketSquareIcon } from './icons';
-import Tooltip from './Tooltip';
+import { Tool } from '../types.ts';
+import { ScissorsIcon, ArrowsPointingOutIcon, CameraIcon, BrainCircuitIcon, PaletteIcon, SunIcon, SwatchIcon, SparklesIcon, BullseyeIcon, FaceSmileIcon, MagicWandIcon, PhotoIcon, TshirtIcon, LayersIcon, UserCircleIcon, UserPlusIcon, CubeTransparentIcon, VideoCameraIcon, MicrophoneIcon, PaintBrushIcon, PencilSquareIcon, DocumentDuplicateIcon, TransformIcon, CodeBracketSquareIcon } from './icons.tsx';
+import Tooltip from './Tooltip.tsx';
 
 interface ToolsPaletteProps {
   activeTool: Tool;
@@ -47,9 +47,8 @@ const ToolsPalette: React.FC<ToolsPaletteProps> = ({ activeTool, onToolSelect })
     { id: 'filter', label: 'Фильтр', icon: <PaletteIcon />, title: "Фильтры: Применяйте стилистические фильтры для изменения настроения вашего изображения, от винтажных до кинематографичных." },
     { id: 'color', label: 'Цвет', icon: <SwatchIcon />, title: "Коррекция цвета: Регулируйте оттенок, насыщенность и яркость всего изображения или выделенной области." },
     { id: 'enhance', label: 'Улучшить', icon: <SparklesIcon />, title: "Улучшить качество: Автоматически улучшайте разрешение, резкость и уменьшайте шум, глобально или в выделенной области." },
-    { id: 'retouch', label: 'Ретушь', icon: <BullseyeIcon />, title: "Ретушь области: Выделите область с помощью кисти, чтобы удалить, заменить или изменить ее содержимое." },
     { id: 'facial', label: 'Лицо', icon: <FaceSmileIcon />, title: "Улучшение лица: Выделите область лица для применения улучшений, таких как сглаживание кожи или осветление глаз." },
-    { id: 'magicEraser', label: 'Магия', icon: <MagicWandIcon />, title: "Волшебная студия: Легко удаляйте объекты или генерируйте новые элементы в любой области." },
+    { id: 'magicEraser', label: 'Маг. Студия', icon: <MagicWandIcon />, title: "Волшебная студия: Удаляйте, редактируйте или создавайте объекты с помощью продвинутого ИИ." },
     { id: 'textEdit', label: 'Текст. правка', icon: <PencilSquareIcon />, title: "Текстовое редактирование: Опишите любое изменение, которое ИИ должен применить ко всему изображению, от стилистических фильтров до удаления содержимого." },
     { id: 'faceSwap', label: 'Замена лица', icon: <UserCircleIcon />, title: "Замена лица: Замените лицо на вашей фотографии, используя от 1 до 8 эталонных изображений." },
     { id: 'background', label: 'Фон', icon: <PhotoIcon />, title: "Замена фона: Замените фон сгенерированной сценой, загруженным изображением или сплошным цветом." },
